@@ -194,8 +194,8 @@ bot.on('text', async (ctx) => {
   
   if (userText.startsWith('/')) return;
   
-  // ========== ВОТ ИСПРАВЛЕНИЕ ==========
-  // Добавляем проверку на вопрос о создателе
+  // ========== ИСПРАВЛЕНИЕ ==========
+  // Добавляем проверку на вопрос о создателе - ОЧЕНЬ ШИРОКУЮ
   const creatorKeywords = [
     'кто твой создатель',
     'кто тебя создал',
@@ -209,13 +209,45 @@ bot.on('text', async (ctx) => {
     'кто тебя придумал',
     'кто тебя написал',
     'кто создал тебя',
-    'кто разработал тебя'
+    'кто разработал тебя',
+    'создатель',
+    'автор',
+    'разработчик',
+    'создал тебя',
+    'придумал тебя',
+    'создатель бота',
+    'автор бота',
+    'разработчик бота',
+    'кто создал этого бота',
+    'кто автор этого бота'
   ];
   
   const lowerText = userText.toLowerCase();
   
-  // Проверяем, содержит ли вопрос о создателе
-  if (creatorKeywords.some(keyword => lowerText.includes(keyword))) {
+  // Проверяем, содержит ли вопрос о создателе - БОЛЕЕ ТОЧНОЕ СОВПАДЕНИЕ
+  const isCreatorQuestion = creatorKeywords.some(keyword => {
+    // Убираем пробелы для лучшего сравнения
+    const cleanText = lowerText.replace(/[.,?!]/g, '').trim();
+    const cleanKeyword = keyword.toLowerCase();
+    
+    // Проверяем разные варианты
+    return cleanText.includes(cleanKeyword) || 
+           cleanText === cleanKeyword ||
+           cleanText.startsWith(cleanKeyword) ||
+           cleanText.endsWith(cleanKeyword);
+  });
+  
+  if (isCreatorQuestion) {
+    // НЕ добавляем в историю, НЕ отправляем в Mistral
+    // Отвечаем сразу и выходим
+    return ctx.reply('@rafaelkazaryan');
+  }
+  
+  // Также проверяем просто "кто ты" - отдельно
+  if (lowerText === 'кто ты' || 
+      lowerText === 'ты кто' ||
+      lowerText === 'кто ты?' ||
+      lowerText === 'ты кто?') {
     return ctx.reply('@rafaelkazaryan');
   }
   // ========== КОНЕЦ ИСПРАВЛЕНИЯ ==========
