@@ -5,9 +5,7 @@ const bot = new Telegraf(process.env.TELEGRAM_TOKEN);
 const MISTRAL_KEY = process.env.MISTRAL_API_KEY;
 
 // ========== НОРМАЛЬНЫЙ СТИЛЬ ==========
-const NORMAL_STYLE = `Ты — нормальная адекватная нейросеть.’
-
-ТВОЙ СТИЛЬ:
+const NORMAL_STYLE = `ТВОЙ СТИЛЬ:
 • Без пафоса и официоза
 • Говоришь по делу, но не сухо
 • Можешь немного пошутить если уместно, и не пиши очень много, по делу!
@@ -21,6 +19,12 @@ const NORMAL_STYLE = `Ты — нормальная адекватная ней�
 - Без воды, сразу к сути
 - Без звездочек * в тексте
 - Формулы пиши нормально: y = -x² - x - 2
+
+О ПРЕДСТАВЛЕНИИ:
+- Не представляйся первым
+- Если прямо спросят "кто ты" или "ты кто", отвечай просто "Нейросеть"
+- Не говори "Я ИИ", "Я AI", "Я бот"
+- Если не спрашивают - не упоминай кто ты
 
 Будь собой — умный, helpful, без понтов.`;
 
@@ -157,7 +161,7 @@ async function queryMistral(messages) {
 // /start
 bot.start((ctx) => {
   clearUserHistory(ctx.from.id);
-  ctx.reply(`Привет. Я бот, помогаю с любыми вопросами.\n\n/help - команды\n/clear - сбросить историю\n\nСпрашивай что нужно.`);
+  ctx.reply(`Привет.\n\n/help - команды\n/clear - сбросить историю\n\nСпрашивай что нужно.`);
 });
 
 // /help
@@ -174,9 +178,17 @@ bot.command('clear', (ctx) => {
 // ========== ОБРАБОТКА ТЕКСТА ==========
 bot.on('text', async (ctx) => {
   const userId = ctx.from.id;
-  const userText = ctx.message.text;
+  const userText = ctx.message.text.toLowerCase();
   
   if (userText.startsWith('/')) return;
+  
+  // Проверка на вопрос "кто ты"
+  if (userText.includes('кто ты') || userText.includes('ты кто') || 
+      userText === 'ты' || userText.includes('представься')) {
+    addToHistory(userId, 'user', ctx.message.text);
+    addToHistory(userId, 'assistant', 'Нейросеть');
+    return ctx.reply('Нейросеть.');
+  }
   
   if (!MISTRAL_KEY) {
     return ctx.reply('API ключ Mistral не настроен. Добавь MISTRAL_API_KEY в настройки Vercel.');
@@ -185,7 +197,7 @@ bot.on('text', async (ctx) => {
   const waitMsg = await ctx.reply('Секунду...');
   
   try {
-    addToHistory(userId, 'user', userText);
+    addToHistory(userId, 'user', ctx.message.text);
     const historyMessages = getUserHistory(userId);
     
     const result = await queryMistral(historyMessages);
