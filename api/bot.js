@@ -9,11 +9,11 @@ const STRICT_STYLE = `ТЫ — ПОМОЩНИК ДЛЯ РЕШЕНИЯ ЗАДАЧ
 ОЧЕНЬ ВАЖНЫЕ ПРАВИЛА:
 1. ОТВЕЧАЙ КОРОТКО И ПО ДЕЛУ
 2. НИКАКИХ ЗВЕЗДОЧЕК (*) В ТЕКСТЕ
-3. ФОРМУЛЫ ПИШИ КРАСИВО:
-   - ДРОБИ: ½ вместо 1/2, ⅓ вместо 1/3
+3. ФОРМУЛЫ ПИШИ КРАСИВО С ГОРИЗОНТАЛЬНЫМИ ДРОБЯМИ:
+   - ½ вместо 1/2, ⅓ вместо 1/3, ¾ вместо 3/4
+   - Для сложных дробей используй символ ⁄ (например: 3⁄2 вместо 3/2, 4⁄5 вместо 4/5)
    - СТЕПЕНИ: x² вместо x^2, y³ вместо y^3
    - УМНОЖЕНИЕ: 2×3 вместо 2*3, 5×x вместо 5*x
-   - ДРОБИ С ПЕРЕМЕННЫМИ: (x+1)/(x-2) или числитель/знаменатель
    - КОРНИ: √(x+1) вместо sqrt(x+1)
 4. НИКАКИХ КВАДРАТНЫХ СКОБОК \[ \] И ТЕХ ФОРМАТОВ
 5. МИНИМУМ ТЕКСТА, МАКСИМУМ СУТИ
@@ -32,10 +32,10 @@ D = 9 + 40 = 49
 y = (-3 ± 7)/2
 y₁ = 2, y₂ = -5
 
-1) 1/(x-1) = 2 → x-1 = ½ → x = ³⁄₂
-2) 1/(x-1) = -5 → x-1 = -⅕ → x = ⅘
+1) 1/(x-1) = 2 → x-1 = ½ → x = 3⁄2
+2) 1/(x-1) = -5 → x-1 = -⅕ → x = 4⁄5
 
-Ответ: x = ³⁄₂ и x = ⅘
+Ответ: x = 3⁄2 и x = 4⁄5
 
 ПРИМЕР 2 (задача):
 Скорость 60 км/ч, время 2 ч.
@@ -46,13 +46,15 @@ y₁ = 2, y₂ = -5
 Б → 1
 В → 2
 
-НИКОГДА НЕ ПИШИ:
-• "Дано уравнение:"
-• "Сделаем замену:"
-• "Таким образом:"
-• Квадратные скобки \[ \]
-• Звездочки *вот так*
-• Много текста про очевидное`;
+ПРИМЕР 4 (дроби):
+(2x+1)/(x-3) = 4
+2x+1 = 4(x-3)
+2x+1 = 4x-12
+2x-4x = -12-1
+-2x = -13
+x = 13⁄2
+
+НИКОГДА НЕ ИСПОЛЬЗУЙ ОБЫЧНЫЙ СЛЭШ / В ОТВЕТАХ, ТОЛЬКО ДРОБНЫЕ ЧЕРТЫ ⁄ ИЛИ UNICODE ДРОБИ`;
 
 // ========== ХРАНЕНИЕ ==========
 const userHistories = new Map();
@@ -153,63 +155,72 @@ function formatMath(text) {
   
   let formatted = text;
   
-  // 1. Дроби: a/b → ½ или a/b → числитель/знаменатель
-  formatted = formatted.replace(/(\d+)\/(\d+)/g, (match, num, den) => {
-    // Простые дроби заменяем на Unicode
-    const simpleFractions = {
-      '1/2': '½', '1/3': '⅓', '2/3': '⅔', '1/4': '¼', 
-      '3/4': '¾', '1/5': '⅕', '2/5': '⅖', '3/5': '⅗',
-      '4/5': '⅘', '1/6': '⅙', '5/6': '⅚', '1/8': '⅛',
-      '3/8': '⅜', '5/8': '⅝', '7/8': '⅞'
-    };
-    
-    if (simpleFractions[match]) {
-      return simpleFractions[match];
-    }
-    
-    // Сложные дроби оставляем как есть или используем HTML
-    return `<sup>${num}</sup>⁄<sub>${den}</sub>`;
+  // 1. Простые дроби: заменяем на Unicode дроби
+  const fractionMap = {
+    '1/2': '½', '1/3': '⅓', '2/3': '⅔', '1/4': '¼', '3/4': '¾',
+    '1/5': '⅕', '2/5': '⅖', '3/5': '⅗', '4/5': '⅘', '1/6': '⅙',
+    '5/6': '⅚', '1/8': '⅛', '3/8': '⅜', '5/8': '⅝', '7/8': '⅞',
+    '1/7': '¹⁄₇', '2/7': '²⁄₇', '3/7': '³⁄₇', '4/7': '⁴⁄₇',
+    '5/7': '⁵⁄₇', '6/7': '⁶⁄₇', '1/9': '¹⁄₉', '2/9': '²⁄₉'
+  };
+  
+  // Сначала заменяем простые дроби
+  Object.entries(fractionMap).forEach(([key, value]) => {
+    const escapedKey = key.replace(/\//g, '\\/');
+    formatted = formatted.replace(new RegExp(escapedKey, 'g'), value);
   });
   
-  // 2. Дроби с переменными: (x+1)/(x-2) → красивое форматирование
-  formatted = formatted.replace(/\(([^)]+)\)\/(\([^)]+\)|[^ )]+)/g, 
-    '<sup>$1</sup>⁄<sub>$2</sub>');
+  // 2. Сложные дроби вида a/b: используем символ FRACTION SLASH (⁄)
+  // Сохраняем контекст чтобы не заменять в URL или других местах
+  formatted = formatted.replace(/(\d+)\s*\/\s*(\d+)(?![₀-₉])/g, (match, num, den) => {
+    // Если уже заменили как простую дробь - пропускаем
+    if (fractionMap[match.trim()]) return fractionMap[match.trim()];
+    
+    // Для сложных дробей используем ⁄ с обычными числами
+    return `${num}⁄${den}`;
+  });
   
-  // 3. Степени
+  // 3. Дроби с переменными в ответах: x = 3/2 → x = 3⁄2
+  formatted = formatted.replace(/x\s*=\s*(\d+)\s*\/\s*(\d+)/g, 'x = $1⁄$2');
+  formatted = formatted.replace(/y\s*=\s*(\d+)\s*\/\s*(\d+)/g, 'y = $1⁄$2');
+  
+  // 4. Степени
   formatted = formatted.replace(/\^2/g, '²');
   formatted = formatted.replace(/\^3/g, '³');
   formatted = formatted.replace(/\^(\d+)/g, '<sup>$1</sup>');
   formatted = formatted.replace(/x2(?![₀-₉ₐ-ₓ])/g, 'x²');
   formatted = formatted.replace(/y2(?![₀-₉ₐ-ₓ])/g, 'y²');
   
-  // 4. Умножение (заменяем * на × в правильных местах)
+  // 5. Умножение (заменяем * на × в правильных местах)
   formatted = formatted.replace(/(\d)\s*\*\s*(\d)/g, '$1×$2');
   formatted = formatted.replace(/(\d)\s*\*\s*([a-zA-Z])/g, '$1×$2');
   formatted = formatted.replace(/([a-zA-Z])\s*\*\s*(\d)/g, '$1×$2');
   
-  // 5. Математические символы
+  // 6. Математические символы
   formatted = formatted.replace(/!=/g, '≠');
   formatted = formatted.replace(/<=/g, '≤');
   formatted = formatted.replace(/>=/g, '≥');
   formatted = formatted.replace(/~=/g, '≈');
   formatted = formatted.replace(/\+-/g, '±');
-  formatted = formatted.replace(/\//g, '⁄'); // обычный слэш на дробную черту
-  
-  // 6. Греческие буквы (если пишут словами)
-  formatted = formatted.replace(/\\?pi\b/gi, 'π');
-  formatted = formatted.replace(/\\?alpha\b/gi, 'α');
-  formatted = formatted.replace(/\\?beta\b/gi, 'β');
-  formatted = formatted.replace(/\\?gamma\b/gi, 'γ');
-  formatted = formatted.replace(/\\?delta\b/gi, 'Δ');
   
   // 7. Корни
   formatted = formatted.replace(/sqrt\(([^)]+)\)/g, '√($1)');
   formatted = formatted.replace(/cbrt\(([^)]+)\)/g, '∛($1)');
   
-  // 8. Индексы
+  // 8. Индексы (для дробей с верхним/нижним индексом)
   formatted = formatted.replace(/_(\d+)/g, '<sub>$1</sub>');
-  formatted = formatted.replace(/x(\d)(?![₀-₉ₐ-ₓ])/g, 'x<sub>$1</sub>');
-  formatted = formatted.replace(/y(\d)(?![₀-₉ₐ-ₓ])/g, 'y<sub>$1</sub>');
+  
+  // 9. Заменяем все оставшиеся слэши на дробные черты в математическом контексте
+  // Но не в URL или путях
+  formatted = formatted.replace(/(\d)\/(\d)/g, '$1⁄$2');
+  formatted = formatted.replace(/\(([^)]+)\)\/(\([^)]+\))/g, '($1)⁄($2)');
+  
+  // 10. Специальные случаи для часто встречающихся дробей
+  formatted = formatted.replace(/3\/2/g, '3⁄2');
+  formatted = formatted.replace(/4\/5/g, '4⁄5');
+  formatted = formatted.replace(/1\/2/g, '½');
+  formatted = formatted.replace(/1\/3/g, '⅓');
+  formatted = formatted.replace(/2\/3/g, '⅔');
   
   return formatted;
 }
@@ -250,7 +261,7 @@ function formatAnswer(text) {
         result.push(line);
       }
       // Если короткая строка (формула)
-      else if (line.length < 50 && (line.includes('/') || line.includes('±') || line.includes('√'))) {
+      else if (line.length < 50 && (line.includes('⁄') || line.includes('±') || line.includes('√'))) {
         result.push(line);
       }
     }
@@ -306,11 +317,11 @@ async function queryMistral(messages) {
       {
         model: 'mistral-small-latest',
         messages: messages,
-        max_tokens: 800, // Меньше токенов = короче ответ
-        temperature: 0.3, // Ниже температура = меньше "креатива"
+        max_tokens: 800,
+        temperature: 0.3,
         top_p: 0.8,
-        frequency_penalty: 0.5, // Штраф за повторения
-        presence_penalty: 0.3 // Штраф за новые темы
+        frequency_penalty: 0.5,
+        presence_penalty: 0.3
       },
       {
         headers: {
@@ -446,7 +457,11 @@ bot.on('photo', async (ctx) => {
 1. ОТВЕЧАЙ ТОЛЬКО РЕШЕНИЕМ И ОТВЕТОМ
 2. НИКАКИХ "Дано:", "Решение:", "Ответ:" в начале
 3. НИКАКИХ ЗВЕЗДОЧЕК (*) В ТЕКСТЕ
-4. ФОРМУЛЫ ПИШИ КРАСИВО: x², y = kx + b, ½ вместо 1/2, × вместо *
+4. ФОРМУЛЫ ПИШИ КРАСИВО С ГОРИЗОНТАЛЬНЫМИ ДРОБЯМИ:
+   - x², y = kx + b
+   - ½ вместо 1/2, ⅓ вместо 1/3
+   - 3⁄2 вместо 3/2, 4⁄5 вместо 4/5
+   - × вместо * для умножения
 5. ЕСЛИ ЗАДАЧА НА СОПОСТАВЛЕНИЕ (А, Б, В и 1, 2, 3) — ПИШИ ТОЛЬКО:
 А → 1
 Б → 2
@@ -460,10 +475,10 @@ D = 9 + 40 = 49
 y = (-3 ± 7)/2
 y₁ = 2, y₂ = -5
 
-1) 1/(x-1) = 2 → x = ³⁄₂
-2) 1/(x-1) = -5 → x = ⅘
+1) 1/(x-1) = 2 → x = 3⁄2
+2) 1/(x-1) = -5 → x = 4⁄5
 
-Ответ: x = ³⁄₂ и x = ⅘`;
+Ответ: x = 3⁄2 и x = 4⁄5`;
     
     const response = await axios.post(
       'https://api.mistral.ai/v1/chat/completions',
@@ -479,7 +494,7 @@ y₁ = 2, y₂ = -5
           }
         ],
         max_tokens: 1000,
-        temperature: 0.2, // Очень низкая температура для точности
+        temperature: 0.2,
         frequency_penalty: 0.7
       },
       {
