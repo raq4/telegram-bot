@@ -888,3 +888,12 @@ module.exports = async (req, res) => {
     });
   }
 };
+
+// ========== ВАЖНО! ==========
+// НЕ ДОБАВЛЯЙТЕ ЭТИ СТРОКИ, ЕСЛИ ИСПОЛЬЗУЕТЕ WEBHOOK НА VERCEL:
+// bot.launch();        // ← УДАЛИТЕ ЭТУ СТРОКУ
+// bot.startPolling();  // ← УДАЛИТЕ ЭТУ СТРОКУ
+// bot.start();         // ← УДАЛИТЕ ЭТУ СТРОКУ
+
+// Экспортируем бота для Vercel
+module.exports.bot = bot;
