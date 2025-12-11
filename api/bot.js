@@ -9,7 +9,12 @@ const STRICT_STYLE = `ТЫ — ПОМОЩНИК ДЛЯ РЕШЕНИЯ ЗАДАЧ
 ОЧЕНЬ ВАЖНЫЕ ПРАВИЛА:
 1. ОТВЕЧАЙ КОРОТКО И ПО ДЕЛУ
 2. НИКАКИХ ЗВЕЗДОЧЕК (*) В ТЕКСТЕ
-3. ФОРМУЛЫ ПИШИ НОРМАЛЬНО: y = -x² - x - 2
+3. ФОРМУЛЫ ПИШИ КРАСИВО:
+   - ДРОБИ: ½ вместо 1/2, ⅓ вместо 1/3
+   - СТЕПЕНИ: x² вместо x^2, y³ вместо y^3
+   - УМНОЖЕНИЕ: 2×3 вместо 2*3, 5×x вместо 5*x
+   - ДРОБИ С ПЕРЕМЕННЫМИ: (x+1)/(x-2) или числитель/знаменатель
+   - КОРНИ: √(x+1) вместо sqrt(x+1)
 4. НИКАКИХ КВАДРАТНЫХ СКОБОК \[ \] И ТЕХ ФОРМАТОВ
 5. МИНИМУМ ТЕКСТА, МАКСИМУМ СУТИ
 6. НЕ ОБЪЯСНЯЙ ОЧЕВИДНОЕ
@@ -27,14 +32,14 @@ D = 9 + 40 = 49
 y = (-3 ± 7)/2
 y₁ = 2, y₂ = -5
 
-1) 1/(x-1) = 2 → x-1 = 1/2 → x = 3/2
-2) 1/(x-1) = -5 → x-1 = -1/5 → x = 4/5
+1) 1/(x-1) = 2 → x-1 = ½ → x = ³⁄₂
+2) 1/(x-1) = -5 → x-1 = -⅕ → x = ⅘
 
-Ответ: x = 3/2 и x = 4/5
+Ответ: x = ³⁄₂ и x = ⅘
 
 ПРИМЕР 2 (задача):
 Скорость 60 км/ч, время 2 ч.
-Расстояние = 60 * 2 = 120 км
+Расстояние = 60 × 2 = 120 км
 
 ПРИМЕР 3 (сопоставление графиков):
 А → 3
@@ -142,11 +147,81 @@ function cleanText(text) {
   return clean.trim();
 }
 
+// ========== МАТЕМАТИЧЕСКОЕ ФОРМАТИРОВАНИЕ ==========
+function formatMath(text) {
+  if (!text) return '';
+  
+  let formatted = text;
+  
+  // 1. Дроби: a/b → ½ или a/b → числитель/знаменатель
+  formatted = formatted.replace(/(\d+)\/(\d+)/g, (match, num, den) => {
+    // Простые дроби заменяем на Unicode
+    const simpleFractions = {
+      '1/2': '½', '1/3': '⅓', '2/3': '⅔', '1/4': '¼', 
+      '3/4': '¾', '1/5': '⅕', '2/5': '⅖', '3/5': '⅗',
+      '4/5': '⅘', '1/6': '⅙', '5/6': '⅚', '1/8': '⅛',
+      '3/8': '⅜', '5/8': '⅝', '7/8': '⅞'
+    };
+    
+    if (simpleFractions[match]) {
+      return simpleFractions[match];
+    }
+    
+    // Сложные дроби оставляем как есть или используем HTML
+    return `<sup>${num}</sup>⁄<sub>${den}</sub>`;
+  });
+  
+  // 2. Дроби с переменными: (x+1)/(x-2) → красивое форматирование
+  formatted = formatted.replace(/\(([^)]+)\)\/(\([^)]+\)|[^ )]+)/g, 
+    '<sup>$1</sup>⁄<sub>$2</sub>');
+  
+  // 3. Степени
+  formatted = formatted.replace(/\^2/g, '²');
+  formatted = formatted.replace(/\^3/g, '³');
+  formatted = formatted.replace(/\^(\d+)/g, '<sup>$1</sup>');
+  formatted = formatted.replace(/x2(?![₀-₉ₐ-ₓ])/g, 'x²');
+  formatted = formatted.replace(/y2(?![₀-₉ₐ-ₓ])/g, 'y²');
+  
+  // 4. Умножение (заменяем * на × в правильных местах)
+  formatted = formatted.replace(/(\d)\s*\*\s*(\d)/g, '$1×$2');
+  formatted = formatted.replace(/(\d)\s*\*\s*([a-zA-Z])/g, '$1×$2');
+  formatted = formatted.replace(/([a-zA-Z])\s*\*\s*(\d)/g, '$1×$2');
+  
+  // 5. Математические символы
+  formatted = formatted.replace(/!=/g, '≠');
+  formatted = formatted.replace(/<=/g, '≤');
+  formatted = formatted.replace(/>=/g, '≥');
+  formatted = formatted.replace(/~=/g, '≈');
+  formatted = formatted.replace(/\+-/g, '±');
+  formatted = formatted.replace(/\//g, '⁄'); // обычный слэш на дробную черту
+  
+  // 6. Греческие буквы (если пишут словами)
+  formatted = formatted.replace(/\\?pi\b/gi, 'π');
+  formatted = formatted.replace(/\\?alpha\b/gi, 'α');
+  formatted = formatted.replace(/\\?beta\b/gi, 'β');
+  formatted = formatted.replace(/\\?gamma\b/gi, 'γ');
+  formatted = formatted.replace(/\\?delta\b/gi, 'Δ');
+  
+  // 7. Корни
+  formatted = formatted.replace(/sqrt\(([^)]+)\)/g, '√($1)');
+  formatted = formatted.replace(/cbrt\(([^)]+)\)/g, '∛($1)');
+  
+  // 8. Индексы
+  formatted = formatted.replace(/_(\d+)/g, '<sub>$1</sub>');
+  formatted = formatted.replace(/x(\d)(?![₀-₉ₐ-ₓ])/g, 'x<sub>$1</sub>');
+  formatted = formatted.replace(/y(\d)(?![₀-₉ₐ-ₓ])/g, 'y<sub>$1</sub>');
+  
+  return formatted;
+}
+
 // ========== ФОРМАТИРОВАНИЕ ОТВЕТА ==========
 function formatAnswer(text) {
   if (!text) return '';
   
   let formatted = cleanText(text);
+  
+  // Применяем математическое форматирование
+  formatted = formatMath(formatted);
   
   // Если это решение уравнения, форматируем особым образом
   if (formatted.includes('=') && (formatted.includes('x') || formatted.includes('y'))) {
@@ -328,11 +403,11 @@ bot.on('text', async (ctx) => {
         if (currentPart) parts.push(currentPart);
         
         for (let i = 0; i < parts.length; i++) {
-          await ctx.reply(parts[i].trim());
+          await ctx.reply(parts[i].trim(), { parse_mode: 'HTML' });
           if (i < parts.length - 1) await new Promise(resolve => setTimeout(resolve, 300));
         }
       } else {
-        await ctx.reply(result.answer);
+        await ctx.reply(result.answer, { parse_mode: 'HTML' });
       }
     } else {
       await ctx.reply(`Ошибка: ${result.answer}`);
@@ -371,7 +446,7 @@ bot.on('photo', async (ctx) => {
 1. ОТВЕЧАЙ ТОЛЬКО РЕШЕНИЕМ И ОТВЕТОМ
 2. НИКАКИХ "Дано:", "Решение:", "Ответ:" в начале
 3. НИКАКИХ ЗВЕЗДОЧЕК (*) В ТЕКСТЕ
-4. ФОРМУЛЫ ПИШИ НОРМАЛЬНО: x², y = kx + b
+4. ФОРМУЛЫ ПИШИ КРАСИВО: x², y = kx + b, ½ вместо 1/2, × вместо *
 5. ЕСЛИ ЗАДАЧА НА СОПОСТАВЛЕНИЕ (А, Б, В и 1, 2, 3) — ПИШИ ТОЛЬКО:
 А → 1
 Б → 2
@@ -385,10 +460,10 @@ D = 9 + 40 = 49
 y = (-3 ± 7)/2
 y₁ = 2, y₂ = -5
 
-1) 1/(x-1) = 2 → x = 3/2
-2) 1/(x-1) = -5 → x = 4/5
+1) 1/(x-1) = 2 → x = ³⁄₂
+2) 1/(x-1) = -5 → x = ⅘
 
-Ответ: x = 3/2 и x = 4/5`;
+Ответ: x = ³⁄₂ и x = ⅘`;
     
     const response = await axios.post(
       'https://api.mistral.ai/v1/chat/completions',
@@ -420,7 +495,7 @@ y₁ = 2, y₂ = -5
     addToHistory(userId, 'assistant', analysis);
     
     await ctx.deleteMessage(waitMsg.message_id);
-    await ctx.reply(analysis);
+    await ctx.reply(analysis, { parse_mode: 'HTML' });
     
   } catch (error) {
     await ctx.deleteMessage(waitMsg.message_id);
