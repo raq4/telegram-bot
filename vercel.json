@@ -1,13 +1,12 @@
 {
+  "version": 2,
   "functions": {
     "api/bot.js": {
-      "maxDuration": 10
+      "memory": 1024,
+      "maxDuration": 15
     }
   },
-  "rewrites": [
-    {
-      "source": "/api/bot",
-      "destination": "/api/bot.js"
-    }
+  "routes": [
+    { "src": "/api/bot", "dest": "/api/bot.js" }
   ]
 }
