@@ -1,5 +1,6 @@
 const { Telegraf } = require('telegraf');
 const axios = require('axios');
+const { createCanvas } = require('canvas'); // Добавляем canvas для генерации формул
 
 const bot = new Telegraf(process.env.TELEGRAM_TOKEN);
 const MISTRAL_KEY = process.env.MISTRAL_API_KEY;
@@ -8,53 +9,26 @@ const MISTRAL_KEY = process.env.MISTRAL_API_KEY;
 const STRICT_STYLE = `ТЫ — ПОМОЩНИК ДЛЯ РЕШЕНИЯ ЗАДАЧ.
 ОЧЕНЬ ВАЖНЫЕ ПРАВИЛА:
 1. ОТВЕЧАЙ КОРОТКО И ПО ДЕЛУ
-2. НИКАКИХ ЗВЕЗДОЧЕК (*) В ТЕКСТЕ
-3. ФОРМУЛЫ ПИШИ КРАСИВО С ГОРИЗОНТАЛЬНЫМИ ДРОБЯМИ:
-   - ½ вместо 1/2, ⅓ вместо 1/3, ¾ вместо 3/4
-   - Для сложных дробей используй символ ⁄ (например: 3⁄2 вместо 3/2, 4⁄5 вместо 4/5)
-   - СТЕПЕНИ: x² вместо x^2, y³ вместо y^3
-   - УМНОЖЕНИЕ: 2×3 вместо 2*3, 5×x вместо 5*x
-   - КОРНИ: √(x+1) вместо sqrt(x+1)
-4. НИКАКИХ КВАДРАТНЫХ СКОБОК \[ \] И ТЕХ ФОРМАТОВ
-5. МИНИМУМ ТЕКСТА, МАКСИМУМ СУТИ
-6. НЕ ОБЪЯСНЯЙ ОЧЕВИДНОЕ
-7. ЕСЛИ СПРОСЯТ "КТО ТЫ" — ОТВЕТЬ "НЕЙРОСЕТЬ" И ВСЕ
+2. ФОРМУЛЫ ПИШИ В ФОРМАТЕ LATEX:
+   - Дроби: \\frac{3}{5} вместо 3/5
+   - Степени: x^{2} вместо x²
+   - Умножение: \\times вместо × или *
+   - Корни: \\sqrt{x+1} вместо √(x+1)
+3. ВСЕ МАТЕМАТИЧЕСКИЕ ВЫРАЖЕНИЯ ОБОРАЧИВАЙ В $$...$$ 
+   Пример: $$\\frac{3}{5} \\div \\frac{4}{9} = \\frac{3}{5} \\times \\frac{9}{4} = \\frac{27}{20} = 1\\frac{7}{20}$$
+4. В ОТВЕТЕ ДОЛЖНО БЫТЬ ДВА ВАРИАНТА:
+   - Лаконичный текстовый ответ
+   - Формулы в формате LaTeX внутри $$...$$
+5. НИКАКИХ ЗВЕЗДОЧЕК (*) В ТЕКСТЕ
+6. МИНИМУМ ТЕКСТА, МАКСИМУМ СУТИ
+7. ЕСЛИ СПРОСЯТ "КТО ТЫ" — ОТВЕТЬ "НЕЙРОСЕТЬ"
 
-И КОГДА Я ТЕБЕ ОТПРАВЛЯЮ ФОТО С КАКИМ ТО ЗАДАНИЕМ (ЛЮБЫМ) ЛИБО УРАВНЕНИЕМ И Т.Д ПРОСТО РЕШАЙ ЕГО!
+ПРИМЕР ПРАВИЛЬНОГО ОТВЕТА:
+Деление дробей. При делении умножаем на обратную дробь.
 
-ПРИМЕРЫ ПРАВИЛЬНЫХ ОТВЕТОВ:
+$$\\frac{3}{5} \\div \\frac{4}{9} = \\frac{3}{5} \\times \\frac{9}{4} = \\frac{3 \\times 9}{5 \\times 4} = \\frac{27}{20} = 1\\frac{7}{20}$$
 
-ПРИМЕР 1 (уравнение):
-1/(x-1)² + 3/(x-1) - 10 = 0
-Замена: y = 1/(x-1)
-y² + 3y - 10 = 0
-D = 9 + 40 = 49
-y = (-3 ± 7)/2
-y₁ = 2, y₂ = -5
-
-1) 1/(x-1) = 2 → x-1 = ½ → x = 3⁄2
-2) 1/(x-1) = -5 → x-1 = -⅕ → x = 4⁄5
-
-Ответ: x = 3⁄2 и x = 4⁄5
-
-ПРИМЕР 2 (задача):
-Скорость 60 км/ч, время 2 ч.
-Расстояние = 60 × 2 = 120 км
-
-ПРИМЕР 3 (сопоставление графиков):
-А → 3
-Б → 1
-В → 2
-
-ПРИМЕР 4 (дроби):
-(2x+1)/(x-3) = 4
-2x+1 = 4(x-3)
-2x+1 = 4x-12
-2x-4x = -12-1
--2x = -13
-x = 13⁄2
-
-НИКОГДА НЕ ИСПОЛЬЗУЙ ОБЫЧНЫЙ СЛЭШ / В ОТВЕТАХ, ТОЛЬКО ДРОБНЫЕ ЧЕРТЫ ⁄ ИЛИ UNICODE ДРОБИ`;
+Ответ: $$1\\frac{7}{20}$$`;
 
 // ========== ХРАНЕНИЕ ==========
 const userHistories = new Map();
@@ -78,7 +52,6 @@ function addToHistory(userId, role, content) {
   const history = userHistories.get(userId);
   history.push({ role, content });
   
-  // Храним последние 7 сообщений + system prompt
   if (history.length > 8) {
     history.splice(1, 1);
   }
@@ -88,225 +61,72 @@ function clearUserHistory(userId) {
   userHistories.delete(userId);
 }
 
-// ========== ОЧИСТКА ТЕКСТА ==========
-function cleanText(text) {
-  if (!text) return '';
+// ========== ПАРСИНГ LATEX ИЗ ОТВЕТА ==========
+function extractLatexFromAnswer(text) {
+  if (!text) return null;
   
-  let clean = text;
+  // Ищем формулы в формате $$...$$
+  const latexMatches = text.match(/\$\$(.*?)\$\$/gs);
+  if (!latexMatches || latexMatches.length === 0) return null;
   
-  // Убираем ВСЕ форматы Markdown
-  clean = clean.replace(/\*\*/g, '');      // **жирный**
-  clean = clean.replace(/\*/g, '');        // *курсив*
-  clean = clean.replace(/__/g, '');        // __подчеркивание__
-  clean = clean.replace(/~~/g, '');        // ~~зачеркивание~~
+  // Берем первую найденную формулу
+  let latex = latexMatches[0].replace(/\$\$/g, '').trim();
   
-  // Убираем LaTeX форматы
-  clean = clean.replace(/\\\[/g, '');
-  clean = clean.replace(/\\\]/g, '');
-  clean = clean.replace(/\\\(/g, '');
-  clean = clean.replace(/\\\)/g, '');
+  // Очищаем от лишних пробелов
+  latex = latex.replace(/\s+/g, ' ').trim();
   
-  // Заменяем специальные символы
-  clean = clean.replace(/→/g, '→');
-  clean = clean.replace(/±/g, '±');
-  
-  // Форматируем степени
-  clean = clean.replace(/\^2/g, '²');
-  clean = clean.replace(/\^3/g, '³');
-  clean = clean.replace(/\^(\d+)/g, '^$1');
-  
-  // Убираем шаблонные вводные фразы
-  const badPhrases = [
-    'Дано уравнение:',
-    'Решим это уравнение:',
-    'Сделаем замену переменной:',
-    'Введем новую переменную:',
-    'Таким образом:',
-    'Итак:',
-    'У нас есть:',
-    'Рассмотрим уравнение:',
-    'Начнем с того, что',
-    'Для решения этого уравнения',
-    'Мы видим, что',
-    'Обратим внимание, что',
-    'Заметим, что',
-    'Можно заметить, что'
-  ];
-  
-  badPhrases.forEach(phrase => {
-    const regex = new RegExp(phrase, 'gi');
-    clean = clean.replace(regex, '');
-  });
-  
-  // Убираем лишние пробелы и переносы
-  clean = clean.replace(/\n{3,}/g, '\n\n');
-  clean = clean.replace(/[ \t]{2,}/g, ' ');
-  
-  // Форматируем списки
-  clean = clean.replace(/^\s*[•\-]\s+/gm, '• ');
-  clean = clean.replace(/^\s*\d+[\.\)]\s+/gm, '$&');
-  
-  return clean.trim();
+  return latex;
 }
 
-// ========== МАТЕМАТИЧЕСКОЕ ФОРМАТИРОВАНИЕ ==========
-function formatMath(text) {
-  if (!text) return '';
-  
-  let formatted = text;
-  
-  // 1. Простые дроби: заменяем на Unicode дроби
-  const fractionMap = {
-    '1/2': '½', '1/3': '⅓', '2/3': '⅔', '1/4': '¼', '3/4': '¾',
-    '1/5': '⅕', '2/5': '⅖', '3/5': '⅗', '4/5': '⅘', '1/6': '⅙',
-    '5/6': '⅚', '1/8': '⅛', '3/8': '⅜', '5/8': '⅝', '7/8': '⅞',
-    '1/7': '¹⁄₇', '2/7': '²⁄₇', '3/7': '³⁄₇', '4/7': '⁴⁄₇',
-    '5/7': '⁵⁄₇', '6/7': '⁶⁄₇', '1/9': '¹⁄₉', '2/9': '²⁄₉'
-  };
-  
-  // Сначала заменяем простые дроби
-  Object.entries(fractionMap).forEach(([key, value]) => {
-    const escapedKey = key.replace(/\//g, '\\/');
-    formatted = formatted.replace(new RegExp(escapedKey, 'g'), value);
-  });
-  
-  // 2. Сложные дроби вида a/b: используем символ FRACTION SLASH (⁄)
-  // Сохраняем контекст чтобы не заменять в URL или других местах
-  formatted = formatted.replace(/(\d+)\s*\/\s*(\d+)(?![₀-₉])/g, (match, num, den) => {
-    // Если уже заменили как простую дробь - пропускаем
-    if (fractionMap[match.trim()]) return fractionMap[match.trim()];
+// ========== ГЕНЕРАЦИЯ ИЗОБРАЖЕНИЯ С ФОРМУЛОЙ ==========
+async function generateFormulaImage(latexFormula) {
+  try {
+    // Для генерации изображений с LaTeX используем внешний API
+    // Можно использовать QuickLaTeX, CodeCogs или другие сервисы
     
-    // Для сложных дробей используем ⁄ с обычными числами
-    return `${num}⁄${den}`;
-  });
-  
-  // 3. Дроби с переменными в ответах: x = 3/2 → x = 3⁄2
-  formatted = formatted.replace(/x\s*=\s*(\d+)\s*\/\s*(\d+)/g, 'x = $1⁄$2');
-  formatted = formatted.replace(/y\s*=\s*(\d+)\s*\/\s*(\d+)/g, 'y = $1⁄$2');
-  
-  // 4. Степени
-  formatted = formatted.replace(/\^2/g, '²');
-  formatted = formatted.replace(/\^3/g, '³');
-  formatted = formatted.replace(/\^(\d+)/g, '<sup>$1</sup>');
-  formatted = formatted.replace(/x2(?![₀-₉ₐ-ₓ])/g, 'x²');
-  formatted = formatted.replace(/y2(?![₀-₉ₐ-ₓ])/g, 'y²');
-  
-  // 5. Умножение (заменяем * на × в правильных местах)
-  formatted = formatted.replace(/(\d)\s*\*\s*(\d)/g, '$1×$2');
-  formatted = formatted.replace(/(\d)\s*\*\s*([a-zA-Z])/g, '$1×$2');
-  formatted = formatted.replace(/([a-zA-Z])\s*\*\s*(\d)/g, '$1×$2');
-  
-  // 6. Математические символы
-  formatted = formatted.replace(/!=/g, '≠');
-  formatted = formatted.replace(/<=/g, '≤');
-  formatted = formatted.replace(/>=/g, '≥');
-  formatted = formatted.replace(/~=/g, '≈');
-  formatted = formatted.replace(/\+-/g, '±');
-  
-  // 7. Корни
-  formatted = formatted.replace(/sqrt\(([^)]+)\)/g, '√($1)');
-  formatted = formatted.replace(/cbrt\(([^)]+)\)/g, '∛($1)');
-  
-  // 8. Индексы (для дробей с верхним/нижним индексом)
-  formatted = formatted.replace(/_(\d+)/g, '<sub>$1</sub>');
-  
-  // 9. Заменяем все оставшиеся слэши на дробные черты в математическом контексте
-  // Но не в URL или путях
-  formatted = formatted.replace(/(\d)\/(\d)/g, '$1⁄$2');
-  formatted = formatted.replace(/\(([^)]+)\)\/(\([^)]+\))/g, '($1)⁄($2)');
-  
-  // 10. Специальные случаи для часто встречающихся дробей
-  formatted = formatted.replace(/3\/2/g, '3⁄2');
-  formatted = formatted.replace(/4\/5/g, '4⁄5');
-  formatted = formatted.replace(/1\/2/g, '½');
-  formatted = formatted.replace(/1\/3/g, '⅓');
-  formatted = formatted.replace(/2\/3/g, '⅔');
-  
-  return formatted;
-}
-
-// ========== ФОРМАТИРОВАНИЕ ОТВЕТА ==========
-function formatAnswer(text) {
-  if (!text) return '';
-  
-  let formatted = cleanText(text);
-  
-  // Применяем математическое форматирование
-  formatted = formatMath(formatted);
-  
-  // Если это решение уравнения, форматируем особым образом
-  if (formatted.includes('=') && (formatted.includes('x') || formatted.includes('y'))) {
-    // Разбиваем на строки
-    const lines = formatted.split('\n').filter(line => line.trim());
-    const result = [];
+    const encodedFormula = encodeURIComponent(latexFormula);
     
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i].trim();
-      
-      // Пропускаем пустые или излишние строки
-      if (!line || line.includes('Таким образом') || line.includes('Итак,')) {
-        continue;
-      }
-      
-      // Если строка начинается с числа и скобки, это пункт решения
-      if (/^\d+[\)\.]/.test(line)) {
-        result.push(line);
-      }
-      // Если это формула или замена
-      else if (line.includes('=') || line.includes('→') || line.includes('Замена:')) {
-        result.push(line);
-      }
-      // Если это ответ
-      else if (line.toLowerCase().includes('ответ:') || line.includes('→')) {
-        result.push(line);
-      }
-      // Если короткая строка (формула)
-      else if (line.length < 50 && (line.includes('⁄') || line.includes('±') || line.includes('√'))) {
-        result.push(line);
-      }
-    }
+    // Вариант 1: QuickLaTeX (бесплатный)
+    const imageUrl = `https://quicklatex.com/latex3.f?${encodedFormula}`;
     
-    // Если мало строк, возвращаем оригинал
-    if (result.length <= 2) {
-      return formatted;
-    }
+    // Вариант 2: CodeCogs (тоже бесплатный)
+    // const imageUrl = `https://latex.codecogs.com/png.latex?\\dpi{200}${encodedFormula}`;
     
-    // Добавляем "Ответ:" если его нет
-    const hasAnswer = result.some(line => 
-      line.toLowerCase().includes('ответ:') || 
-      (line.includes('x =') && line.includes('и'))
-    );
-    
-    if (!hasAnswer && result.length > 0) {
-      const lastLine = result[result.length - 1];
-      if (lastLine.includes('x =')) {
-        result[result.length - 1] = 'Ответ: ' + lastLine;
-      }
-    }
-    
-    return result.join('\n');
-  }
-  
-  // Для задач на сопоставление
-  if (formatted.includes('А') && formatted.includes('Б') && formatted.includes('В')) {
-    const lines = formatted.split('\n');
-    const matches = [];
-    
-    lines.forEach(line => {
-      if (line.includes('А') && line.match(/\d/)) {
-        const match = line.match(/([АБВ])[^→]*→?\s*(\d)/);
-        if (match) {
-          matches.push(`${match[1]} → ${match[2]}`);
-        }
-      }
+    // Скачиваем изображение
+    const response = await axios.get(imageUrl, {
+      responseType: 'arraybuffer',
+      timeout: 10000
     });
     
-    if (matches.length >= 2) {
-      return matches.join('\n');
-    }
+    return response.data; // Возвращаем Buffer с изображением
+    
+  } catch (error) {
+    console.error('Ошибка генерации формулы:', error.message);
+    return null;
   }
+}
+
+// ========== ОБРАБОТКА ОТВЕТА ==========
+function processAnswer(text) {
+  if (!text) return { text: '', latex: null };
   
-  return formatted;
+  let cleanText = text;
+  
+  // Убираем Markdown
+  cleanText = cleanText.replace(/\*\*/g, '');
+  cleanText = cleanText.replace(/\*/g, '');
+  cleanText = cleanText.replace(/__/g, '');
+  
+  // Извлекаем LaTeX формулы
+  const latex = extractLatexFromAnswer(cleanText);
+  
+  // Убираем LaTeX формулы из текстового ответа
+  const textOnly = cleanText.replace(/\$\$(.*?)\$\$/gs, '').trim();
+  
+  return {
+    text: textOnly,
+    latex: latex
+  };
 }
 
 // ========== ЗАПРОС К AI ==========
@@ -317,33 +137,34 @@ async function queryMistral(messages) {
       {
         model: 'mistral-small-latest',
         messages: messages,
-        max_tokens: 800,
+        max_tokens: 1000,
         temperature: 0.3,
-        top_p: 0.8,
-        frequency_penalty: 0.5,
-        presence_penalty: 0.3
+        top_p: 0.8
       },
       {
         headers: {
           'Authorization': `Bearer ${MISTRAL_KEY}`,
           'Content-Type': 'application/json'
         },
-        timeout: 25000
+        timeout: 30000
       }
     );
     
     const answer = response.data.choices[0].message.content;
+    const processed = processAnswer(answer);
     
     return {
       success: true,
-      answer: formatAnswer(answer)
+      text: processed.text,
+      latex: processed.latex
     };
     
   } catch (error) {
     console.error('Mistral error:', error.message);
     return {
       success: false,
-      answer: `Ошибка: ${error.message}`
+      text: `Ошибка: ${error.message}`,
+      latex: null
     };
   }
 }
@@ -351,11 +172,11 @@ async function queryMistral(messages) {
 // ========== КОМАНДЫ ==========
 bot.start((ctx) => {
   clearUserHistory(ctx.from.id);
-  ctx.reply(`Привет. Я - нейросеть. Пиши свой вопрос — отвечу.\n/clear - очистить историю`);
+  ctx.reply(`Привет. Я - нейросеть. Пришли задачу — решу с формулами.\n/clear - очистить историю`);
 });
 
 bot.help((ctx) => {
-  ctx.reply(`Спроси или отправь фото. Отвечу кратко и по делу.`);
+  ctx.reply(`Пришли задачу или уравнение. Отвечу текстом и покажу формулы как в учебнике.`);
 });
 
 bot.command('clear', (ctx) => {
@@ -368,14 +189,10 @@ bot.on('text', async (ctx) => {
   const userId = ctx.from.id;
   const userText = ctx.message.text.trim();
   
-  // Игнорируем команды
   if (userText.startsWith('/')) return;
   
-  // Простые вопросы
   if (userText.toLowerCase().includes('кто ты') || 
-      userText.toLowerCase().includes('ты кто') ||
-      userText === '?' ||
-      userText.toLowerCase() === 'ты') {
+      userText.toLowerCase().includes('ты кто')) {
     return ctx.reply('Нейросеть.');
   }
   
@@ -383,7 +200,7 @@ bot.on('text', async (ctx) => {
     return ctx.reply('API ключ не настроен.');
   }
   
-  const waitMsg = await ctx.reply('💭Думаю..');
+  const waitMsg = await ctx.reply('💭 Решаю...');
   
   try {
     addToHistory(userId, 'user', userText);
@@ -394,34 +211,39 @@ bot.on('text', async (ctx) => {
     await ctx.deleteMessage(waitMsg.message_id);
     
     if (result.success) {
-      addToHistory(userId, 'assistant', result.answer);
+      addToHistory(userId, 'assistant', result.text);
       
-      // Разбиваем длинные ответы
-      if (result.answer.length > 2000) {
-        const parts = [];
-        let currentPart = '';
-        const lines = result.answer.split('\n');
-        
-        for (const line of lines) {
-          if ((currentPart + line + '\n').length > 2000) {
-            parts.push(currentPart);
-            currentPart = line + '\n';
+      // Отправляем текстовый ответ
+      if (result.text) {
+        await ctx.reply(result.text);
+      }
+      
+      // Если есть LaTeX формула, генерируем и отправляем изображение
+      if (result.latex) {
+        try {
+          const generatingMsg = await ctx.reply('📐 Генерирую формулу...');
+          
+          // Пробуем сгенерировать изображение формулы
+          const imageBuffer = await generateFormulaImage(result.latex);
+          
+          if (imageBuffer) {
+            await ctx.deleteMessage(generatingMsg.message_id);
+            
+            // Отправляем изображение с формулой
+            await ctx.replyWithPhoto(
+              { source: Buffer.from(imageBuffer) },
+              { caption: `Формула: ${result.latex}` }
+            );
           } else {
-            currentPart += line + '\n';
+            await ctx.editMessageText(generatingMsg.message_id, 
+              'Не удалось сгенерировать формулу. Вот она в текстовом виде:\n' + result.latex);
           }
+        } catch (imgError) {
+          await ctx.reply(`Формула в LaTeX:\n${result.latex}`);
         }
-        
-        if (currentPart) parts.push(currentPart);
-        
-        for (let i = 0; i < parts.length; i++) {
-          await ctx.reply(parts[i].trim(), { parse_mode: 'HTML' });
-          if (i < parts.length - 1) await new Promise(resolve => setTimeout(resolve, 300));
-        }
-      } else {
-        await ctx.reply(result.answer, { parse_mode: 'HTML' });
       }
     } else {
-      await ctx.reply(`Ошибка: ${result.answer}`);
+      await ctx.reply(result.text);
     }
     
   } catch (error) {
@@ -442,7 +264,7 @@ bot.on('photo', async (ctx) => {
   }
   
   const caption = ctx.message.caption || '';
-  const waitMsg = await ctx.reply('👀Смотрю фото..');
+  const waitMsg = await ctx.reply('👀 Смотрю фото...');
   
   try {
     const photo = ctx.message.photo[ctx.message.photo.length - 1];
@@ -455,30 +277,13 @@ bot.on('photo', async (ctx) => {
     
 ОЧЕНЬ ВАЖНО:
 1. ОТВЕЧАЙ ТОЛЬКО РЕШЕНИЕМ И ОТВЕТОМ
-2. НИКАКИХ "Дано:", "Решение:", "Ответ:" в начале
-3. НИКАКИХ ЗВЕЗДОЧЕК (*) В ТЕКСТЕ
-4. ФОРМУЛЫ ПИШИ КРАСИВО С ГОРИЗОНТАЛЬНЫМИ ДРОБЯМИ:
-   - x², y = kx + b
-   - ½ вместо 1/2, ⅓ вместо 1/3
-   - 3⁄2 вместо 3/2, 4⁄5 вместо 4/5
-   - × вместо * для умножения
-5. ЕСЛИ ЗАДАЧА НА СОПОСТАВЛЕНИЕ (А, Б, В и 1, 2, 3) — ПИШИ ТОЛЬКО:
-А → 1
-Б → 2
-В → 3
+2. ВСЕ МАТЕМАТИЧЕСКИЕ ВЫРАЖЕНИЯ ПИШИ В ФОРМАТЕ LATEX ВНУТРИ $$...$$
+3. ПРИМЕР ПРАВИЛЬНОГО ОТВЕТА:
+Деление дробей. При делении умножаем на обратную дробь.
 
-ПРИМЕР ПРАВИЛЬНОГО ОТВЕТА ДЛЯ УРАВНЕНИЯ:
-1/(x-1)² + 3/(x-1) - 10 = 0
-Замена: y = 1/(x-1)
-y² + 3y - 10 = 0
-D = 9 + 40 = 49
-y = (-3 ± 7)/2
-y₁ = 2, y₂ = -5
+$$\\frac{3}{5} \\div \\frac{4}{9} = \\frac{3}{5} \\times \\frac{9}{4} = \\frac{3 \\times 9}{5 \\times 4} = \\frac{27}{20} = 1\\frac{7}{20}$$
 
-1) 1/(x-1) = 2 → x = 3⁄2
-2) 1/(x-1) = -5 → x = 4⁄5
-
-Ответ: x = 3⁄2 и x = 4⁄5`;
+Ответ: $$1\\frac{7}{20}$$`;
     
     const response = await axios.post(
       'https://api.mistral.ai/v1/chat/completions',
@@ -493,9 +298,8 @@ y₁ = 2, y₂ = -5
             ]
           }
         ],
-        max_tokens: 1000,
-        temperature: 0.2,
-        frequency_penalty: 0.7
+        max_tokens: 1500,
+        temperature: 0.2
       },
       {
         headers: {
@@ -506,11 +310,40 @@ y₁ = 2, y₂ = -5
       }
     );
     
-    const analysis = formatAnswer(response.data.choices[0].message.content);
-    addToHistory(userId, 'assistant', analysis);
+    const answer = response.data.choices[0].message.content;
+    const processed = processAnswer(answer);
+    
+    addToHistory(userId, 'assistant', processed.text);
     
     await ctx.deleteMessage(waitMsg.message_id);
-    await ctx.reply(analysis, { parse_mode: 'HTML' });
+    
+    // Отправляем текстовый ответ
+    if (processed.text) {
+      await ctx.reply(processed.text);
+    }
+    
+    // Если есть LaTeX формула, генерируем изображение
+    if (processed.latex) {
+      try {
+        const generatingMsg = await ctx.reply('📐 Генерирую формулу...');
+        
+        const imageBuffer = await generateFormulaImage(processed.latex);
+        
+        if (imageBuffer) {
+          await ctx.deleteMessage(generatingMsg.message_id);
+          
+          await ctx.replyWithPhoto(
+            { source: Buffer.from(imageBuffer) },
+            { caption: `Решение:` }
+          );
+        } else {
+          await ctx.editMessageText(generatingMsg.message_id, 
+            'Не удалось сгенерировать формулу. Вот она в текстовом виде:\n' + processed.latex);
+        }
+      } catch (imgError) {
+        await ctx.reply(`Формула в LaTeX:\n${processed.latex}`);
+      }
+    }
     
   } catch (error) {
     await ctx.deleteMessage(waitMsg.message_id);
@@ -523,7 +356,7 @@ module.exports = async (req, res) => {
   if (req.method === 'GET') {
     return res.status(200).json({
       status: 'Telegram Math Bot',
-      style: 'Кратко, по делу, без воды',
+      features: 'Текстовые ответы + изображения с формулами',
       timestamp: new Date().toISOString()
     });
   }
