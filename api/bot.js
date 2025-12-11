@@ -15,6 +15,8 @@ const STRICT_STYLE = `ТЫ — ПОМОЩНИК ДЛЯ РЕШЕНИЯ ЗАДАЧ
 6. НЕ ОБЪЯСНЯЙ ОЧЕВИДНОЕ
 7. ЕСЛИ СПРОСЯТ "КТО ТЫ" — ОТВЕТЬ "НЕЙРОСЕТЬ" И ВСЕ
 
+И КОГДА Я ТЕБЕ ОТПРАВЛЯЮ ФОТО С КАКИМ ТО ЗАДАНИЕМ (ЛЮБЫМ) ЛИБО УРАВНЕНИЕМ И Т.Д ПРОСТО РЕШАЙ ЕГО!
+
 ПРИМЕРЫ ПРАВИЛЬНЫХ ОТВЕТОВ:
 
 ПРИМЕР 1 (уравнение):
@@ -295,7 +297,7 @@ bot.on('text', async (ctx) => {
     return ctx.reply('API ключ не настроен.');
   }
   
-  const waitMsg = await ctx.reply('Думаю...');
+  const waitMsg = await ctx.reply('💭Думаю..');
   
   try {
     addToHistory(userId, 'user', userText);
@@ -354,7 +356,7 @@ bot.on('photo', async (ctx) => {
   }
   
   const caption = ctx.message.caption || '';
-  const waitMsg = await ctx.reply('Смотрю фото...');
+  const waitMsg = await ctx.reply('👀Смотрю фото..');
   
   try {
     const photo = ctx.message.photo[ctx.message.photo.length - 1];
