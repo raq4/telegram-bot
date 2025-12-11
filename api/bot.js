@@ -20,6 +20,8 @@ const NORMAL_STYLE = `Ты — нормальный адекватный пом�
 - Если ошибка — говори что не так и как исправить
 - Код давай сразу рабочий
 - Без воды, сразу к сути
+- Без звездочек * в тексте
+- Формулы пиши нормально: y = -x² - x - 2
 
 Будь собой — умный, helpful, без понтов.`;
 
@@ -56,23 +58,63 @@ function clearUserHistory(userId) {
 
 // ========== ФУНКЦИИ ==========
 
-// Убираем всю воду из ответов
-function removeWater(text) {
-  const waterPhrases = [
-   'Могу углубиться в детали'
-  ];
+// Убираем всю воду, звездочки и форматируем текст
+function cleanText(text) {
+  if (!text) return '';
   
   let clean = text;
+  
+  // Убираем звездочки форматирования (но оставляем умножение если есть числа)
+  clean = clean.replace(/\*\*(.*?)\*\*/g, '$1');      // **жирный** → жирный
+  clean = clean.replace(/\*(?!\s)(.*?)(?<!\s)\*/g, '$1'); // *курсив* → курсив
+  
+  // Оставляем звездочки умножения типа 2*3
+  clean = clean.replace(/(\d)\s*\*\s*(\d)/g, '$1*$2');
+  
+  // Исправляем формулы
+  clean = clean.replace(/\\\(/g, '').replace(/\\\)/g, ''); // убираем \( и \)
+  clean = clean.replace(/y\s*=\s*-x\^2/g, 'y = -x²');
+  clean = clean.replace(/y\s*=\s*x\^2/g, 'y = x²');
+  clean = clean.replace(/\^2/g, '²');
+  clean = clean.replace(/\^3/g, '³');
+  
+  // Убираем лишние эмодзи (оставляем максимум 1 на абзац)
+  clean = clean.replace(/[\u{1F300}-\u{1F9FF}]{2,}/gu, '');
+  
+  // Убираем шаблонные фразы
+  const waterPhrases = [
+    'Могу углубиться в детали',
+    'Давайте разберемся',
+    'Прекрасно!',
+    'Отлично!',
+    'Великолепно!'
+  ];
+  
   waterPhrases.forEach(phrase => {
     const regex = new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '.*?(?=\\n|$)', 'gis');
     clean = clean.replace(regex, '');
   });
   
-  // Убираем лишние эмодзи
-  clean = clean.replace(/[\u{1F300}-\u{1F9FF}]{2,}/gu, '');
+  // Форматируем списки красиво
+  clean = clean.replace(/^\s*[•\-]\s+/gm, '• ');
+  clean = clean.replace(/^\s*\d+\.\s+/gm, match => match.trim() + ' ');
   
-  // Убираем двойные переносы
-  clean = clean.replace(/\n{3,}/g, '\n\n').trim();
+  // Убираем двойные переносы и пробелы
+  clean = clean.replace(/\n{3,}/g, '\n\n');
+  clean = clean.replace(/[ \t]{2,}/g, ' ');
+  clean = clean.trim();
+  
+  // Если есть формулы в конце - отделяем их
+  if (clean.includes('=') && clean.includes('x')) {
+    const lines = clean.split('\n');
+    const formattedLines = lines.map(line => {
+      if (line.includes('=') && line.includes('x')) {
+        return line.replace(/\s+/g, ' ').trim();
+      }
+      return line;
+    });
+    clean = formattedLines.join('\n');
+  }
   
   return clean;
 }
@@ -102,7 +144,7 @@ async function queryMistral(messages) {
     
     return {
       success: true,
-      answer: removeWater(answer)
+      answer: cleanText(answer)
     };
     
   } catch (error) {
@@ -190,8 +232,8 @@ bot.on('photo', async (ctx) => {
     addToHistory(userId, 'user', `[Фото: ${caption || 'задача'}]`);
     
     const prompt = caption ? 
-      `На фото задание. Вопрос: "${caption}". Реши задание и ответь на вопрос.` :
-      `На фото какое-то задание или текст. Реши что нужно решить, ответь на вопросы если они есть. Без лишних описаний.`;
+      `На фото задание. Вопрос: "${caption}". Реши задание и ответь на вопрос. Без звездочек в ответе, формулы пиши нормально.` :
+      `На фото какое-то задание или текст. Реши что нужно решить, ответь на вопросы если они есть. Без лишних описаний и звездочек. Формулы пиши как: y = x² + 2x + 1`;
     
     const response = await axios.post(
       'https://api.mistral.ai/v1/chat/completions',
@@ -218,23 +260,61 @@ bot.on('photo', async (ctx) => {
       }
     );
     
-    const analysis = removeWater(response.data.choices[0].message.content);
+    const analysis = cleanText(response.data.choices[0].message.content);
     addToHistory(userId, 'assistant', analysis);
     
     await ctx.deleteMessage(waitMsg.message_id);
     
-    // Если анализ получился слишком описательным, упрощаем
+    // Форматируем ответ для задач с сопоставлением
     let answer = analysis;
-    if (answer.toLowerCase().includes('на фото') && answer.length > 200) {
-      const lines = answer.split('\n');
-      const solutionLines = lines.filter(line => 
+    
+    // Если это задача на сопоставление (А-Б-В и 1-2-3)
+    if ((answer.includes('А') && answer.includes('Б') && answer.includes('В')) ||
+        (answer.includes('График А') || answer.includes('График Б') || answer.includes('График В'))) {
+      
+      // Создаем чистый формат
+      const lines = answer.split('\n').filter(line => line.trim());
+      const cleanLines = lines.map(line => {
+        // Убираем все маркдаун
+        line = line.replace(/\*\*/g, '');
+        line = line.replace(/\*/g, '');
+        
+        // Форматируем сопоставления
+        if (line.includes('А') || line.includes('Б') || line.includes('В')) {
+          line = line.replace(/—/g, '→').replace(/соответствует/g, '→');
+          line = line.replace(/\s+/g, ' ').trim();
+        }
+        
+        return line;
+      });
+      
+      answer = cleanLines.join('\n');
+      
+      // Добавляем итоговый ответ если его нет
+      if (!answer.includes('Ответ:') && !answer.includes('А →')) {
+        const matches = [];
+        if (answer.includes('А') && answer.includes('1')) matches.push('А → 1');
+        if (answer.includes('Б') && answer.includes('2')) matches.push('Б → 2');
+        if (answer.includes('В') && answer.includes('3')) matches.push('В → 3');
+        if (answer.includes('А') && answer.includes('3')) matches.push('А → 3');
+        if (answer.includes('Б') && answer.includes('1')) matches.push('Б → 1');
+        if (answer.includes('В') && answer.includes('2')) matches.push('В → 2');
+        
+        if (matches.length > 0) {
+          answer += '\n\nОтвет:\n' + matches.join('\n');
+        }
+      }
+    }
+    
+    // Если ответ слишком длинный, упрощаем
+    if (answer.length > 1500) {
+      const importantParts = answer.split('\n').filter(line => 
         line.includes('Ответ:') || 
-        line.includes('Решение:') ||
-        line.match(/\d+\./) ||
+        line.includes('→') ||
         line.includes('=') ||
-        line.length < 100
+        line.length < 80
       );
-      answer = solutionLines.join('\n') || answer;
+      answer = importantParts.join('\n') || answer.substring(0, 1500) + '...';
     }
     
     await ctx.reply(answer);
@@ -250,7 +330,7 @@ module.exports = async (req, res) => {
   if (req.method === 'GET') {
     return res.status(200).json({
       status: 'Normal Telegram Bot',
-      style: 'No bullshit, straight to the point',
+      style: 'Clean text, no stars, no bullshit',
       timestamp: new Date().toISOString()
     });
   }
