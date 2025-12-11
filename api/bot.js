@@ -4,175 +4,104 @@ const axios = require('axios');
 const bot = new Telegraf(process.env.TELEGRAM_TOKEN);
 const MISTRAL_KEY = process.env.MISTRAL_API_KEY;
 
-// ========== НАСТРОЙКИ АДМИНИСТРАТОРОВ ==========
-const ADMINS = [5455087529, 8354814927];
-
-function isAdmin(userId) {
-  return ADMINS.includes(userId);
-}
-
 // ========== ХРАНЕНИЕ ==========
 const userHistories = new Map();
-const responseCache = new Map();
 
-// Умный промпт для модели
-const SYSTEM_PROMPT = `Ты — экспертный ассистент с глубокими знаниями в программировании, математике, науке и общих вопросах.
+// Умный промпт для ВОПРОСОВ ПО ФОТО
+const PHOTO_QUESTION_PROMPT = `Ты — эксперт, который помогает решать задачи по фотографиям.
 
-ТВОИ ПРИНЦИПЫ:
-1. ДАВАЙ ГЛУБОКИЕ, ДЕТАЛЬНЫЕ ОТВЕТЫ
-2. РЕШАЙ ЗАДАЧИ ПОШАГОВО
-3. ПРОВЕРЯЙ СВОИ ВЫЧИСЛЕНИЯ
-4. ФОРМАТИРУЙ ОТВЕТЫ ЧЕТКО:
-   • Заголовки - жирным
-   • Списки - с маркерами
-   • Код - в отдельных блоках
-   • Математика - с формулами
+КОГДА ПОЛЬЗОВАТЕЛЬ ПРИСЫЛАЕТ ФОТО С ВОПРОСОМ:
+1. Сначала ПОНИМАЙ что на фото (задачи, текст, схемы)
+2. ОТВЕЧАЙ НА СОДЕРЖАНИЕ фото
+3. РЕШАЙ ЗАДАЧИ если они есть
+4. ОБЪЯСНЯЙ РЕШЕНИЕ
+5. Если фото содержит вопросы — ОТВЕЧАЙ на них
 
-СТИЛЬ ОТВЕТА:
-• Будь точным и уверенным
-• Объясняй сложное простыми словами
-• Приводи примеры
-• Проверяй логику ответа`;
+ПРАВИЛА:
+• НЕ ПРОСТО ОПИСЫВАЙ фото
+• РЕШАЙ ЗАДАЧИ по фото
+• ОТВЕЧАЙ на ВОПРОСЫ из фото
+• БУДЬ ПОЛЕЗНЫМ
+• Если математика — РЕШАЙ с вычислениями
+• Если текст — АНАЛИЗИРУЙ и ОТВЕЧАЙ
 
-// Промпт для анализа изображений
-const VISION_PROMPT = `Ты — эксперт по анализу изображений. Твоя задача — максимально подробно описать что изображено на фото.
+ФОРМАТ:
+📸 На фото вижу: [коротко что на фото]
+🧮 Решение/Ответ: [решаем задачи/отвечаем на вопросы]
+📝 Пояснение: [объясняем если нужно]
 
-ПРИ АНАЛИЗЕ ИЗОБРАЖЕНИЙ:
-1. Опиши ОСНОВНЫЕ ОБЪЕКТЫ (что видишь)
-2. Укажи ДЕТАЛИ (цвета, форма, размер)
-3. Определи КОНТЕКСТ (где снято, время суток)
-4. Проанализируй НАСТРОЕНИЕ/АТМОСФЕРУ
-5. Если есть текст — распознай его
-6. Если есть лица/люди — опиши (без оценки внешности)
-7. Если это скриншот/интерфейс — объясни что на нем
-8. Если это документ — попробуй распознать содержание
+Отвечай на русском.`;
 
-ФОРМАТ ОТВЕТА:
-📸 ОПИСАНИЕ ИЗОБРАЖЕНИЯ:
-
-🏷️ Основные объекты: ...
-🎨 Детали: ...
-📍 Контекст: ...
-💭 Настроение: ...
-📝 Текст/надписи: ...
-🔍 Дополнительные наблюдения: ...
-
-Отвечай на русском языке. Будь максимально подробным.`;
+// Промпт для обычных вопросов
+const TEXT_PROMPT = `Ты — полезный ассистент. Отвечай подробно и полезно.`;
 
 // Получить историю
-function getUserHistory(userId) {
+function getUserHistory(userId, isPhoto = false) {
   if (!userHistories.has(userId)) {
     userHistories.set(userId, [
-      { role: 'system', content: SYSTEM_PROMPT }
+      { role: 'system', content: TEXT_PROMPT }
     ]);
   }
-  return userHistories.get(userId).slice(-12);
+  
+  // Если это вопрос по фото, меняем системный промпт
+  const history = userHistories.get(userId);
+  if (isPhoto && history[0].content !== PHOTO_QUESTION_PROMPT) {
+    history[0].content = PHOTO_QUESTION_PROMPT;
+  } else if (!isPhoto && history[0].content !== TEXT_PROMPT) {
+    history[0].content = TEXT_PROMPT;
+  }
+  
+  return history.slice(-10);
 }
 
 // Добавить в историю
-function addToHistory(userId, role, content) {
+function addToHistory(userId, role, content, isPhotoQuestion = false) {
   if (!userHistories.has(userId)) {
     userHistories.set(userId, [
-      { role: 'system', content: SYSTEM_PROMPT }
+      { role: 'system', content: isPhotoQuestion ? PHOTO_QUESTION_PROMPT : TEXT_PROMPT }
     ]);
   }
   
   const history = userHistories.get(userId);
   history.push({ role, content });
   
-  if (history.length > 13) {
-    const systemMsg = history[0];
-    const otherMsgs = history.slice(1);
-    const trimmed = otherMsgs.slice(-12);
-    userHistories.set(userId, [systemMsg, ...trimmed]);
+  if (history.length > 11) {
+    history.splice(1, 1); // Удаляем самое старое сообщение (но не системное)
   }
 }
 
 // Очистить историю
 function clearUserHistory(userId) {
   userHistories.delete(userId);
-  responseCache.delete(userId);
 }
 
-// ========== ФУНКЦИИ ОБРАБОТКИ ==========
+// ========== ФУНКЦИИ ==========
 
-// Анализ сложности вопроса
-function analyzeQuestionComplexity(text) {
-  const complexKeywords = ['реши', 'задача', 'уравнение', 'докажи', 'алгоритм', 'формула'];
-  let complexity = 1;
-  
-  complexKeywords.forEach(keyword => {
-    if (text.toLowerCase().includes(keyword)) complexity = 2;
-  });
-  
-  if (text.length > 200) complexity = Math.max(complexity, 2);
-  
-  return complexity;
-}
-
-// Получить настройки модели
-function getModelSettings(complexity) {
-  return {
-    model: complexity === 3 ? 'mistral-medium-latest' : 'mistral-small-latest',
-    temperature: complexity === 3 ? 0.3 : 0.7,
-    max_tokens: complexity === 3 ? 2000 : 1500,
-  };
-}
-
-// Запрос к Mistral для текста
-async function queryMistralAI(messages, complexity) {
-  const settings = getModelSettings(complexity);
-  
+// Анализировать фото и отвечать на вопросы по нему
+async function analyzeAndAnswerPhoto(imageUrl, userQuestion = '') {
   try {
+    // Формируем промпт в зависимости от того, есть ли вопрос
+    let prompt = '';
+    if (userQuestion) {
+      prompt = `Пользователь спрашивает: "${userQuestion}"\n\nНа фото я вижу учебные задачи. ПОМОГИ РЕШИТЬ ЗАДАЧИ и ответь на вопрос пользователя.\n\nСначала решим задачи из фото, потом ответим на вопрос пользователя.`;
+    } else {
+      prompt = `На фото математические задачи. РЕШИ ИХ ПОШАГОВО и дай ответы.\n\nНе просто описывай фото — РЕШАЙ ЗАДАЧИ!`;
+    }
+
     const response = await axios.post(
       'https://api.mistral.ai/v1/chat/completions',
       {
-        model: settings.model,
-        messages: messages,
-        max_tokens: settings.max_tokens,
-        temperature: settings.temperature,
-      },
-      {
-        headers: {
-          'Authorization': `Bearer ${MISTRAL_KEY}`,
-          'Content-Type': 'application/json'
-        },
-        timeout: 35000
-      }
-    );
-    
-    return {
-      success: true,
-      answer: response.data.choices[0].message.content,
-      model: settings.model
-    };
-    
-  } catch (error) {
-    return {
-      success: false,
-      error: error.message,
-      suggestion: 'Попробуйте переформулировать вопрос.'
-    };
-  }
-}
-
-// Запрос к Mistral для анализа изображений
-async function queryMistralVision(imageUrl) {
-  try {
-    const response = await axios.post(
-      'https://api.mistral.ai/v1/chat/completions',
-      {
-        model: 'mistral-small-latest', // Модель с поддержкой Vision
+        model: 'mistral-small-latest',
         messages: [
           {
             role: 'user',
             content: [
-              { type: 'text', text: VISION_PROMPT },
+              { type: 'text', text: prompt },
               { type: 'image_url', image_url: { url: imageUrl } }
             ]
           }
         ],
-        max_tokens: 1500,
+        max_tokens: 2000,
         temperature: 0.3
       },
       {
@@ -180,139 +109,86 @@ async function queryMistralVision(imageUrl) {
           'Authorization': `Bearer ${MISTRAL_KEY}`,
           'Content-Type': 'application/json'
         },
-        timeout: 60000 // 60 секунд для анализа фото
+        timeout: 60000
       }
     );
-    
+
     return {
       success: true,
-      description: response.data.choices[0].message.content,
+      answer: response.data.choices[0].message.content,
       model: 'mistral-vision'
     };
-    
+
   } catch (error) {
-    console.error('Vision API Error:', error.response?.data || error.message);
-    
-    // Если Vision не поддерживается, пробуем обычную модель
-    if (error.response?.data?.error?.code === 'model_not_found') {
-      return {
-        success: false,
-        error: 'Модель не поддерживает анализ изображений',
-        suggestion: 'Попробуйте другую фотографию или опишите её текстом.'
-      };
-    }
-    
+    console.error('Photo analysis error:', error.message);
     return {
       success: false,
-      error: 'Не удалось проанализировать изображение',
-      suggestion: 'Попробуйте другую фотографию.'
+      error: 'Не удалось проанализировать фото',
+      suggestion: 'Попробуйте сфотографировать более четко или задать вопрос текстом.'
+    };
+  }
+}
+
+// Обработка текстовых вопросов
+async function queryMistralAI(messages) {
+  try {
+    const response = await axios.post(
+      'https://api.mistral.ai/v1/chat/completions',
+      {
+        model: 'mistral-small-latest',
+        messages: messages,
+        max_tokens: 1500,
+        temperature: 0.7,
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${MISTRAL_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 30000
+      }
+    );
+
+    return {
+      success: true,
+      answer: response.data.choices[0].message.content
+    };
+
+  } catch (error) {
+    return {
+      success: false,
+      error: 'Ошибка при обработке запроса',
+      suggestion: 'Попробуйте переформулировать вопрос.'
     };
   }
 }
 
 // Форматирование ответа
 function formatResponse(text) {
-  let formatted = text;
-  
-  // Обрабатываем код
-  const codeBlocks = formatted.match(/```(\w+)?\n([\s\S]*?)```/g) || [];
-  const codes = [];
-  
-  codeBlocks.forEach((block, index) => {
-    const match = block.match(/```(\w+)?\n([\s\S]*?)```/);
-    if (match) {
-      const language = match[1] || '';
-      const code = match[2];
-      codes.push({ language, code, index });
-      formatted = formatted.replace(block, `[КОД ${index + 1}]`);
-    }
-  });
-  
-  // Обрабатываем форматирование
-  formatted = formatted
-    .replace(/\*\*(.*?)\*\*/g, '✨ $1 ✨')
-    .replace(/\*(?!\*)(.*?)\*/g, '• $1')
-    .replace(/`([^`]+)`/g, '«$1»')
-    .replace(/#{1,6}\s?(.*?)(\n|$)/g, '📌 $1\n')
-    .replace(/^\s*[-*•]\s+/gm, '   • ')
+  // Упрощенное форматирование
+  return text
+    .replace(/\*\*(.*?)\*\*/g, '$1')
+    .replace(/\*(.*?)\*/g, '$1')
+    .replace(/`(.*?)`/g, '«$1»')
     .trim();
-  
-  return { text: formatted, codes };
-}
-
-// Отправка ответа
-async function sendResponse(ctx, aiResult) {
-  if (!aiResult.success) {
-    return await ctx.reply(`❌ ${aiResult.error}\n\n💡 ${aiResult.suggestion}`);
-  }
-  
-  const { text: formattedText, codes } = formatResponse(aiResult.answer || aiResult.description);
-  
-  // Отправляем основной текст
-  if (formattedText.trim()) {
-    await ctx.reply(formattedText);
-  }
-  
-  // Отправляем код отдельно
-  for (const code of codes) {
-    const codeMessage = `💻 Код (${code.language || 'текст'}):\n\`\`\`${code.language || ''}\n${code.code}\n\`\`\``;
-    await ctx.reply(codeMessage, { 
-      parse_mode: 'Markdown'
-    });
-  }
 }
 
 // ========== КОМАНДЫ ==========
 
 // /start
 bot.start((ctx) => {
-  const userId = ctx.from.id;
-  clearUserHistory(userId);
-  
-  const welcomeText = `👋 Привет, ${ctx.from.first_name || 'друг'}!
-
-🤖 Я умный бот с возможностями:
-• 📝 Глубокие текстовые ответы
-• 📸 Анализ изображений
-• 🧮 Решение задач
-• 💻 Помощь с кодом
-
-📸 *ДЛЯ АНАЛИЗА ФОТО:*
-Просто отправь мне любое изображение!
-
-Команды:
-/clear - очистить историю
-/help - помощь
-${isAdmin(userId) ? '/admin - админ' : ''}`;
-  
-  ctx.reply(welcomeText, { parse_mode: 'Markdown' });
+  clearUserHistory(ctx.from.id);
+  ctx.reply(`👋 Привет! Я бот который РЕШАЕТ задачи по фото!\n\n📸 Отправь фото с задачей — я решу её\n📝 Или просто задай вопрос\n\n/clear - очистить историю\n/help - помощь`);
 });
 
 // /help
 bot.help((ctx) => {
-  ctx.reply(`🤖 Помощь по боту
-
-*Возможности:*
-📝 Текстовые вопросы — любые темы
-📸 Фотографии — детальный анализ
-🧮 Математика — решение задач
-💻 Программирование — помощь с кодом
-
-*Как использовать:*
-1. Напиши вопрос — получи развернутый ответ
-2. Отправь фото — получи описание
-3. Задай уточняющий вопрос — бот помнит контекст
-
-*Команды:*
-/start - перезапустить
-/clear - очистить историю
-/help - эта справка`, { parse_mode: 'Markdown' });
+  ctx.reply(`🤖 Как использовать:\n\n1. 📸 Отправь фото с задачей → получу решение\n2. 📝 Напиши вопрос → отвечу\n3. 📸 Фото + вопрос → решу и отвечу\n\nПример: отправь фото с математической задачей — решу её пошагово!`);
 });
 
 // /clear
 bot.command('clear', (ctx) => {
-  const userId = ctx.from.id;
-  clearUserHistory(userId);
+  clearUserHistory(ctx.from.id);
   ctx.reply('✅ История очищена!');
 });
 
@@ -324,53 +200,32 @@ bot.on('text', async (ctx) => {
   if (userText.startsWith('/')) return;
   
   if (!MISTRAL_KEY) {
-    return ctx.reply('❌ Mistral API ключ не настроен.');
-  }
-  
-  // Проверяем кэш
-  const cacheKey = userText.toLowerCase().trim();
-  if (responseCache.has(cacheKey)) {
-    await ctx.reply(`💾 Ответ из кэша:\n\n${responseCache.get(cacheKey)}`);
-    return;
+    return ctx.reply('❌ API ключ не настроен.');
   }
   
   const waitMsg = await ctx.reply('💭 Думаю...');
   
   try {
-    addToHistory(userId, 'user', userText);
-    const historyMessages = getUserHistory(userId);
-    const complexity = analyzeQuestionComplexity(userText);
+    addToHistory(userId, 'user', userText, false);
+    const historyMessages = getUserHistory(userId, false);
     
-    const aiResult = await queryMistralAI(historyMessages, complexity);
+    const aiResult = await queryMistralAI(historyMessages);
     
     if (aiResult.success) {
-      addToHistory(userId, 'assistant', aiResult.answer);
-      
-      // Кэшируем
-      if (complexity === 1) {
-        responseCache.set(cacheKey, aiResult.answer);
-        if (responseCache.size > 50) {
-          const firstKey = responseCache.keys().next().value;
-          responseCache.delete(firstKey);
-        }
-      }
-      
+      addToHistory(userId, 'assistant', aiResult.answer, false);
       await ctx.deleteMessage(waitMsg.message_id);
-      await sendResponse(ctx, aiResult);
+      
+      const formatted = formatResponse(aiResult.answer);
+      await ctx.reply(formatted);
       
     } else {
       await ctx.deleteMessage(waitMsg.message_id);
-      await ctx.reply(`❌ ${aiResult.error}\n\n💡 ${aiResult.suggestion}`);
+      await ctx.reply(`❌ ${aiResult.error}\n💡 ${aiResult.suggestion}`);
     }
     
   } catch (error) {
-    if (waitMsg) {
-      try {
-        await ctx.deleteMessage(waitMsg.message_id);
-      } catch (e) {}
-    }
-    
-    await ctx.reply(`❌ Ошибка: ${error.message}`);
+    if (waitMsg) await ctx.deleteMessage(waitMsg.message_id);
+    await ctx.reply('❌ Ошибка. Попробуйте еще раз.');
   }
 });
 
@@ -379,57 +234,73 @@ bot.on('photo', async (ctx) => {
   const userId = ctx.from.id;
   
   if (!MISTRAL_KEY) {
-    return ctx.reply('❌ Mistral API ключ не настроен.');
+    return ctx.reply('❌ API ключ не настроен.');
   }
   
-  const waitMsg = await ctx.reply('👀 Анализирую изображение...');
+  // Проверяем, есть ли подпись к фото (вопрос)
+  const userQuestion = ctx.message.caption || '';
+  const hasQuestion = userQuestion.trim().length > 0;
+  
+  const waitMsg = await ctx.reply(hasQuestion ? 
+    '📸 Вижу фото с вопросом... Решаю...' : 
+    '📸 Анализирую фото... Решаю задачи...'
+  );
   
   try {
-    // Получаем ссылку на фото (самое качественное)
+    // Получаем ссылку на фото
     const photo = ctx.message.photo[ctx.message.photo.length - 1];
     const fileLink = await ctx.telegram.getFileLink(photo.file_id);
     const imageUrl = fileLink.href;
     
     // Добавляем в историю
-    addToHistory(userId, 'user', '[Отправил изображение]');
+    const historyMessage = hasQuestion ? 
+      `[Фото + вопрос: "${userQuestion}"]` : 
+      '[Отправил фото с задачей]';
+    addToHistory(userId, 'user', historyMessage, true);
     
-    // Анализируем изображение
-    const visionResult = await queryMistralVision(imageUrl);
+    // Анализируем фото и отвечаем на вопросы
+    const photoResult = await analyzeAndAnswerPhoto(imageUrl, userQuestion);
     
-    if (visionResult.success) {
-      // Добавляем описание в историю
-      addToHistory(userId, 'assistant', `Описание фото: ${visionResult.description}`);
+    if (photoResult.success) {
+      // Добавляем ответ в историю
+      addToHistory(userId, 'assistant', photoResult.answer, true);
       
       await ctx.deleteMessage(waitMsg.message_id);
       
-      // Форматируем и отправляем описание
-      let description = visionResult.description;
+      // Форматируем и отправляем ответ
+      let response = photoResult.answer;
       
-      // Улучшаем форматирование для фото
-      description = description
-        .replace(/📸 ОПИСАНИЕ ИЗОБРАЖЕНИЯ:/g, '📸 *ОПИСАНИЕ ИЗОБРАЖЕНИЯ:*')
-        .replace(/🏷️ Основные объекты:/g, '\n🏷️ *Основные объекты:*')
-        .replace(/🎨 Детали:/g, '\n🎨 *Детали:*')
-        .replace(/📍 Контекст:/g, '\n📍 *Контекст:*')
-        .replace(/💭 Настроение:/g, '\n💭 *Настроение:*')
-        .replace(/📝 Текст\/надписи:/g, '\n📝 *Текст/надписи:*')
-        .replace(/🔍 Дополнительные наблюдения:/g, '\n🔍 *Дополнительные наблюдения:*');
+      // Убираем лишнее описание если оно есть
+      if (response.includes('На фото вижу:')) {
+        // Оставляем только решение
+        const solutionStart = response.indexOf('Решение:');
+        if (solutionStart !== -1) {
+          response = response.substring(solutionStart);
+        }
+      }
       
-      await ctx.reply(description, { 
-        parse_mode: 'Markdown',
-        disable_web_page_preview: true 
-      });
+      // Добавляем заголовок
+      const finalResponse = hasQuestion ?
+        `📝 *Ответ на ваш вопрос:*\n\n${response}` :
+        `✅ *Решение задач с фото:*\n\n${response}`;
+      
+      await ctx.reply(formatResponse(finalResponse));
       
     } else {
       await ctx.deleteMessage(waitMsg.message_id);
-      await ctx.reply(`❌ ${visionResult.error}\n\n💡 ${visionResult.suggestion}`);
+      await ctx.reply(`❌ ${photoResult.error}\n💡 ${photoResult.suggestion}`);
     }
     
   } catch (error) {
     await ctx.deleteMessage(waitMsg.message_id);
-    console.error('Photo processing error:', error);
+    console.error('Photo error:', error);
     
-    await ctx.reply('❌ Не удалось обработать изображение. Попробуйте другую фотографию.');
+    // Альтернатива: просим описать фото текстом
+    if (hasQuestion) {
+      await ctx.reply(`Не удалось прочитать фото. Задайте вопрос текстом: "${userQuestion}"`);
+    } else {
+      await ctx.reply('Не удалось прочитать фото. Попробуйте:\n1. Сфотографировать более четко\n2. Или опишите задачу текстом');
+    }
   }
 });
 
@@ -437,8 +308,7 @@ bot.on('photo', async (ctx) => {
 module.exports = async (req, res) => {
   if (req.method === 'GET') {
     return res.status(200).json({
-      status: '✅ Telegram Bot with Vision is running',
-      features: ['text_ai', 'image_analysis', 'memory', 'caching'],
+      status: '✅ Photo Problem Solver Bot',
       users: userHistories.size,
       timestamp: new Date().toISOString()
     });
