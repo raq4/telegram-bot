@@ -1,0 +1,13 @@
+{
+  "functions": {
+    "api/bot.js": {
+      "maxDuration": 10
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/api/bot",
+      "destination": "/api/bot.js"
+    }
+  ]
+}
