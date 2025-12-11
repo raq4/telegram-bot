@@ -269,7 +269,111 @@ bot.start(async (ctx) => {
   const msg = await ctx.reply(welcomeText, { parse_mode: 'Markdown' });
   saveMessageId(userId, msg.message_id);
 });
+// ========== КОМАНДЫ ПЕРЕЗАПУСКА ==========
 
+// /reload - перезагрузить настройки без перезапуска (админы)
+bot.command('reload', async (ctx) => {
+  const userId = ctx.from.id;
+  
+  if (!isAdmin(userId)) {
+    const msg = await ctx.reply('🚫 Только для администраторов.');
+    saveMessageId(userId, msg.message_id);
+    saveMessageId(userId, ctx.message.message_id);
+    return;
+  }
+  
+  const reloadMsg = await ctx.reply('🔄 Перезагружаю настройки...');
+  
+  // Очищаем все кэши
+  const userCount = userHistories.size;
+  const messageCount = Array.from(userStats.values())
+    .reduce((sum, stat) => sum + stat.messages, 0);
+  
+  userHistories.clear();
+  userStats.clear();
+  userChats.clear();
+  
+  // Перезагружаем переменные окружения
+  const newMistralKey = process.env.MISTRAL_API_KEY;
+  
+  await ctx.editMessageText(
+    `✅ <b>Настройки перезагружены!</b>\n\n` +
+    `• Очищено пользователей: ${userCount}\n` +
+    `• Удалено сообщений: ${messageCount}\n` +
+    `• Mistral API: ${newMistralKey ? '✅ активен' : '❌ не настроен'}\n\n` +
+    `<i>Бот готов к работе с чистой памятью.</i>`,
+    { 
+      parse_mode: 'HTML',
+      message_id: reloadMsg.message_id 
+    }
+  );
+  
+  saveMessageId(userId, reloadMsg.message_id);
+  saveMessageId(userId, ctx.message.message_id);
+});
+
+// /restart - перезапустить бота (админы)
+bot.command('restart', async (ctx) => {
+  const userId = ctx.from.id;
+  
+  if (!isAdmin(userId)) {
+    return ctx.reply('🚫 Только для администраторов.');
+  }
+  
+  const confirmMsg = await ctx.reply(
+    '⚠️ <b>Перезапуск бота</b>\n\n' +
+    'Это очистит ВСЮ память бота:\n' +
+    '• История всех пользователей\n' +
+    '• Статистика\n' +
+    '• Кэши\n\n' +
+    'Для подтверждения отправьте: <code>/restart_confirm</code>\n\n' +
+    '<i>Бот будет работать, но память очистится.</i>',
+    { parse_mode: 'HTML' }
+  );
+  
+  saveMessageId(userId, confirmMsg.message_id);
+  saveMessageId(userId, ctx.message.message_id);
+});
+
+// Подтверждение перезапуска
+bot.command('restart_confirm', async (ctx) => {
+  const userId = ctx.from.id;
+  
+  if (!isAdmin(userId)) {
+    return ctx.reply('🚫 Только для администраторов.');
+  }
+  
+  const restartMsg = await ctx.reply('🔄 <b>Перезапускаю бота...</b>', { 
+    parse_mode: 'HTML' 
+  });
+  
+  saveMessageId(userId, restartMsg.message_id);
+  saveMessageId(userId, ctx.message.message_id);
+  
+  // Очищаем все данные
+  const userCount = userHistories.size;
+  const messageCount = Array.from(userStats.values())
+    .reduce((sum, stat) => sum + stat.messages, 0);
+  
+  userHistories.clear();
+  userStats.clear();
+  userChats.clear();
+  
+  // Ждем 2 секунды для имитации перезапуска
+  setTimeout(async () => {
+    await ctx.editMessageText(
+      '✅ <b>Бот перезапущен!</b>\n\n' +
+      `• Очищено пользователей: ${userCount}\n` +
+      `• Удалено сообщений: ${messageCount}\n` +
+      '• Сброшены все кэши\n\n' +
+      '<i>Бот готов к работе с чистой памятью.</i>',
+      { 
+        parse_mode: 'HTML',
+        message_id: restartMsg.message_id 
+      }
+    );
+  }, 2000);
+});
 // /clearchat - удалить все сообщения в чате
 bot.command('clearchat', async (ctx) => {
   const userId = ctx.from.id;
