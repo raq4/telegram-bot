@@ -1,31 +1,10 @@
 {
-  "name": "telegram-mistral-bot",
-  "version": "3.0.0",
-  "description": "Telegram bot with Mistral AI and admin panel",
-  "main": "api/bot.js",
-  "engines": {
-    "node": "20.x"
-  },
-  "scripts": {
-    "start": "node api/bot.js",
-    "dev": "node api/bot.js"
-  },
+  "name": "telegram-bot-formatted",
+  "version": "1.0.0",
+  "engines": { "node": "20.x" },
+  "scripts": { "start": "node api/bot.js" },
   "dependencies": {
     "telegraf": "^4.15.0",
     "axios": "^1.6.0"
-  },
-  "keywords": [
-    "telegram",
-    "bot",
-    "mistral",
-    "ai",
-    "admin",
-    "chatbot"
-  ],
-  "author": "Rafael Kazaryan",
-  "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/raq4/telegram-bot"
   }
 }
