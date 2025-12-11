@@ -1,22 +1,11 @@
 {
   "name": "telegram-smart-bot",
   "version": "3.0.0",
-  "description": "Telegram bot that solves problems concisely",
-  "main": "api/bot.js",
-  "scripts": {
-    "start": "node api/bot.js",
-    "dev": "nodemon api/bot.js"
-  },
+  "engines": { "node": "20.x" },
+  "scripts": { "start": "node api/bot.js" },
   "dependencies": {
     "telegraf": "^4.15.0",
-    "axios": "^1.6.0"
-  },
-  "devDependencies": {
-    "nodemon": "^3.0.0"
-  },
-  "engines": {
-    "node": ">=18.0.0"
-  },
-  "keywords": ["telegram", "bot", "math", "mistral"],
-  "license": "MIT"
+    "axios": "^1.6.0",
+    "canvas": "^2.11.2"
+  }
 }
