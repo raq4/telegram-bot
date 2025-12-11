@@ -4,29 +4,48 @@ const axios = require('axios');
 const bot = new Telegraf(process.env.TELEGRAM_TOKEN);
 const MISTRAL_KEY = process.env.MISTRAL_API_KEY;
 
-// ========== НОРМАЛЬНЫЙ СТИЛЬ ==========
-const NORMAL_STYLE = `ТВОЙ СТИЛЬ:
-• Без пафоса и официоза
-• Говоришь по делу, но не сухо
-• Можешь немного пошутить если уместно, и не пиши очень много, по делу!
-• Не слишком серьезный, не слишком милый
-• Упомянутые выше слова не употребляй очень редко а тоесть: пафос, официоз 
+// ========== СТРОГИЙ СТИЛЬ ==========
+const STRICT_STYLE = `ТЫ — ПОМОЩНИК ДЛЯ РЕШЕНИЯ ЗАДАЧ.
+ОЧЕНЬ ВАЖНЫЕ ПРАВИЛА:
+1. ОТВЕЧАЙ КОРОТКО И ПО ДЕЛУ
+2. НИКАКИХ ЗВЕЗДОЧЕК (*) В ТЕКСТЕ
+3. ФОРМУЛЫ ПИШИ НОРМАЛЬНО: y = -x² - x - 2
+4. НИКАКИХ КВАДРАТНЫХ СКОБОК \[ \] И ТЕХ ФОРМАТОВ
+5. МИНИМУМ ТЕКСТА, МАКСИМУМ СУТИ
+6. НЕ ОБЪЯСНЯЙ ОЧЕВИДНОЕ
+7. ЕСЛИ СПРОСЯТ "КТО ТЫ" — ОТВЕТЬ "НЕЙРОСЕТЬ" И ВСЕ
 
-КАК ОТВЕЧАТЬ:
-- Коротко и ясно
-- Если сложный вопрос — объясняй простыми словами
-- Если ошибка — говори что не так и как исправить
-- Без воды, сразу к сути
-- Без звездочек * в тексте
-- Формулы пиши нормально: y = -x² - x - 2
+ПРИМЕРЫ ПРАВИЛЬНЫХ ОТВЕТОВ:
 
-О ПРЕДСТАВЛЕНИИ:
-- Не представляйся первым
-- Если прямо спросят "кто ты" или "ты кто", отвечай просто "Нейросеть"
-- Не говори "Я ИИ", "Я AI", "Я бот"
-- Если не спрашивают - не упоминай кто ты
+ПРИМЕР 1 (уравнение):
+1/(x-1)² + 3/(x-1) - 10 = 0
+Замена: y = 1/(x-1)
+y² + 3y - 10 = 0
+D = 9 + 40 = 49
+y = (-3 ± 7)/2
+y₁ = 2, y₂ = -5
 
-Будь собой — умный, helpful, без понтов.`;
+1) 1/(x-1) = 2 → x-1 = 1/2 → x = 3/2
+2) 1/(x-1) = -5 → x-1 = -1/5 → x = 4/5
+
+Ответ: x = 3/2 и x = 4/5
+
+ПРИМЕР 2 (задача):
+Скорость 60 км/ч, время 2 ч.
+Расстояние = 60 * 2 = 120 км
+
+ПРИМЕР 3 (сопоставление графиков):
+А → 3
+Б → 1
+В → 2
+
+НИКОГДА НЕ ПИШИ:
+• "Дано уравнение:"
+• "Сделаем замену:"
+• "Таким образом:"
+• Квадратные скобки \[ \]
+• Звездочки *вот так*
+• Много текста про очевидное`;
 
 // ========== ХРАНЕНИЕ ==========
 const userHistories = new Map();
@@ -34,23 +53,24 @@ const userHistories = new Map();
 function getUserHistory(userId) {
   if (!userHistories.has(userId)) {
     userHistories.set(userId, [
-      { role: 'system', content: NORMAL_STYLE }
+      { role: 'system', content: STRICT_STYLE }
     ]);
   }
-  return userHistories.get(userId).slice(-8);
+  return userHistories.get(userId);
 }
 
 function addToHistory(userId, role, content) {
   if (!userHistories.has(userId)) {
     userHistories.set(userId, [
-      { role: 'system', content: NORMAL_STYLE }
+      { role: 'system', content: STRICT_STYLE }
     ]);
   }
   
   const history = userHistories.get(userId);
   history.push({ role, content });
   
-  if (history.length > 9) {
+  // Храним последние 7 сообщений + system prompt
+  if (history.length > 8) {
     history.splice(1, 1);
   }
 }
@@ -59,68 +79,149 @@ function clearUserHistory(userId) {
   userHistories.delete(userId);
 }
 
-// ========== ФУНКЦИИ ==========
-
-// Убираем всю воду, звездочки и форматируем текст
+// ========== ОЧИСТКА ТЕКСТА ==========
 function cleanText(text) {
   if (!text) return '';
   
   let clean = text;
   
-  // Убираем звездочки форматирования (но оставляем умножение если есть числа)
-  clean = clean.replace(/\*\*(.*?)\*\*/g, '$1');      // **жирный** → жирный
-  clean = clean.replace(/\*(?!\s)(.*?)(?<!\s)\*/g, '$1'); // *курсив* → курсив
+  // Убираем ВСЕ форматы Markdown
+  clean = clean.replace(/\*\*/g, '');      // **жирный**
+  clean = clean.replace(/\*/g, '');        // *курсив*
+  clean = clean.replace(/__/g, '');        // __подчеркивание__
+  clean = clean.replace(/~~/g, '');        // ~~зачеркивание~~
   
-  // Оставляем звездочки умножения типа 2*3
-  clean = clean.replace(/(\d)\s*\*\s*(\d)/g, '$1*$2');
+  // Убираем LaTeX форматы
+  clean = clean.replace(/\\\[/g, '');
+  clean = clean.replace(/\\\]/g, '');
+  clean = clean.replace(/\\\(/g, '');
+  clean = clean.replace(/\\\)/g, '');
   
-  // Исправляем формулы
-  clean = clean.replace(/\\\(/g, '').replace(/\\\)/g, ''); // убираем \( и \)
-  clean = clean.replace(/y\s*=\s*-x\^2/g, 'y = -x²');
-  clean = clean.replace(/y\s*=\s*x\^2/g, 'y = x²');
+  // Заменяем специальные символы
+  clean = clean.replace(/→/g, '→');
+  clean = clean.replace(/±/g, '±');
+  
+  // Форматируем степени
   clean = clean.replace(/\^2/g, '²');
   clean = clean.replace(/\^3/g, '³');
+  clean = clean.replace(/\^(\d+)/g, '^$1');
   
-  // Убираем лишние эмодзи (оставляем максимум 1 на абзац)
-  clean = clean.replace(/[\u{1F300}-\u{1F9FF}]{2,}/gu, '');
-  
-  // Убираем шаблонные фразы
-  const waterPhrases = [
-    'Могу углубиться в детали',
-    'Давайте разберемся',
-    'Великолепно!'
+  // Убираем шаблонные вводные фразы
+  const badPhrases = [
+    'Дано уравнение:',
+    'Решим это уравнение:',
+    'Сделаем замену переменной:',
+    'Введем новую переменную:',
+    'Таким образом:',
+    'Итак:',
+    'У нас есть:',
+    'Рассмотрим уравнение:',
+    'Начнем с того, что',
+    'Для решения этого уравнения',
+    'Мы видим, что',
+    'Обратим внимание, что',
+    'Заметим, что',
+    'Можно заметить, что'
   ];
   
-  waterPhrases.forEach(phrase => {
-    const regex = new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '.*?(?=\\n|$)', 'gis');
+  badPhrases.forEach(phrase => {
+    const regex = new RegExp(phrase, 'gi');
     clean = clean.replace(regex, '');
   });
   
-  // Форматируем списки красиво
-  clean = clean.replace(/^\s*[•\-]\s+/gm, '• ');
-  clean = clean.replace(/^\s*\d+\.\s+/gm, match => match.trim() + ' ');
-  
-  // Убираем двойные переносы и пробелы
+  // Убираем лишние пробелы и переносы
   clean = clean.replace(/\n{3,}/g, '\n\n');
   clean = clean.replace(/[ \t]{2,}/g, ' ');
-  clean = clean.trim();
   
-  // Если есть формулы в конце - отделяем их
-  if (clean.includes('=') && clean.includes('x')) {
-    const lines = clean.split('\n');
-    const formattedLines = lines.map(line => {
-      if (line.includes('=') && line.includes('x')) {
-        return line.replace(/\s+/g, ' ').trim();
-      }
-      return line;
-    });
-    clean = formattedLines.join('\n');
-  }
+  // Форматируем списки
+  clean = clean.replace(/^\s*[•\-]\s+/gm, '• ');
+  clean = clean.replace(/^\s*\d+[\.\)]\s+/gm, '$&');
   
-  return clean;
+  return clean.trim();
 }
 
-// Запрос к AI
+// ========== ФОРМАТИРОВАНИЕ ОТВЕТА ==========
+function formatAnswer(text) {
+  if (!text) return '';
+  
+  let formatted = cleanText(text);
+  
+  // Если это решение уравнения, форматируем особым образом
+  if (formatted.includes('=') && (formatted.includes('x') || formatted.includes('y'))) {
+    // Разбиваем на строки
+    const lines = formatted.split('\n').filter(line => line.trim());
+    const result = [];
+    
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      
+      // Пропускаем пустые или излишние строки
+      if (!line || line.includes('Таким образом') || line.includes('Итак,')) {
+        continue;
+      }
+      
+      // Если строка начинается с числа и скобки, это пункт решения
+      if (/^\d+[\)\.]/.test(line)) {
+        result.push(line);
+      }
+      // Если это формула или замена
+      else if (line.includes('=') || line.includes('→') || line.includes('Замена:')) {
+        result.push(line);
+      }
+      // Если это ответ
+      else if (line.toLowerCase().includes('ответ:') || line.includes('→')) {
+        result.push(line);
+      }
+      // Если короткая строка (формула)
+      else if (line.length < 50 && (line.includes('/') || line.includes('±') || line.includes('√'))) {
+        result.push(line);
+      }
+    }
+    
+    // Если мало строк, возвращаем оригинал
+    if (result.length <= 2) {
+      return formatted;
+    }
+    
+    // Добавляем "Ответ:" если его нет
+    const hasAnswer = result.some(line => 
+      line.toLowerCase().includes('ответ:') || 
+      (line.includes('x =') && line.includes('и'))
+    );
+    
+    if (!hasAnswer && result.length > 0) {
+      const lastLine = result[result.length - 1];
+      if (lastLine.includes('x =')) {
+        result[result.length - 1] = 'Ответ: ' + lastLine;
+      }
+    }
+    
+    return result.join('\n');
+  }
+  
+  // Для задач на сопоставление
+  if (formatted.includes('А') && formatted.includes('Б') && formatted.includes('В')) {
+    const lines = formatted.split('\n');
+    const matches = [];
+    
+    lines.forEach(line => {
+      if (line.includes('А') && line.match(/\d/)) {
+        const match = line.match(/([АБВ])[^→]*→?\s*(\d)/);
+        if (match) {
+          matches.push(`${match[1]} → ${match[2]}`);
+        }
+      }
+    });
+    
+    if (matches.length >= 2) {
+      return matches.join('\n');
+    }
+  }
+  
+  return formatted;
+}
+
+// ========== ЗАПРОС К AI ==========
 async function queryMistral(messages) {
   try {
     const response = await axios.post(
@@ -128,9 +229,11 @@ async function queryMistral(messages) {
       {
         model: 'mistral-small-latest',
         messages: messages,
-        max_tokens: 1200,
-        temperature: 0.5,
-        top_p: 0.9
+        max_tokens: 800, // Меньше токенов = короче ответ
+        temperature: 0.3, // Ниже температура = меньше "креатива"
+        top_p: 0.8,
+        frequency_penalty: 0.5, // Штраф за повторения
+        presence_penalty: 0.3 // Штраф за новые темы
       },
       {
         headers: {
@@ -145,84 +248,104 @@ async function queryMistral(messages) {
     
     return {
       success: true,
-      answer: cleanText(answer)
+      answer: formatAnswer(answer)
     };
     
   } catch (error) {
+    console.error('Mistral error:', error.message);
     return {
       success: false,
-      answer: `Не смог получить ответ от AI. Проверь API ключ Mistral.`
+      answer: `Ошибка: ${error.message}`
     };
   }
 }
 
 // ========== КОМАНДЫ ==========
-
-// /start
 bot.start((ctx) => {
   clearUserHistory(ctx.from.id);
-  ctx.reply(`Привет дружище.\n\n/help - команды\n/clear - очистить историю\n\nЯ буду рад помочь, спрашивай что нужно.`);
+  ctx.reply(`Привет. Пиши задачу — решу.\n/clear - сбросить историю`);
 });
 
-// /help
 bot.help((ctx) => {
-  ctx.reply(`Команды:\n/clear - очистить историю\n\nЧто умею:\n• Отвечаю на вопросы\n• Помогаю с кодом\n• Решаю задачи\n• Смотрю фото с задачами\n\nПиши вопрос — отвечу.`);
+  ctx.reply(`Просто пришли задачу, уравнение или фото. Отвечу кратко и по делу.`);
 });
 
-// /clear
 bot.command('clear', (ctx) => {
   clearUserHistory(ctx.from.id);
-  ctx.reply('История сброшена🧹.');
+  ctx.reply('История очищена.');
 });
 
-// ========== ОБРАБОТКА ТЕКСТА ==========
+// ========== ТЕКСТ ==========
 bot.on('text', async (ctx) => {
   const userId = ctx.from.id;
-  const userText = ctx.message.text.toLowerCase();
+  const userText = ctx.message.text.trim();
   
+  // Игнорируем команды
   if (userText.startsWith('/')) return;
   
-  // Проверка на вопрос "кто ты"
-  if (userText.includes('кто ты') || userText.includes('ты кто') || 
-      userText === 'ты' || userText.includes('представься')) {
-    addToHistory(userId, 'user', ctx.message.text);
-    addToHistory(userId, 'assistant', 'Нейросеть');
+  // Простые вопросы
+  if (userText.toLowerCase().includes('кто ты') || 
+      userText.toLowerCase().includes('ты кто') ||
+      userText === '?' ||
+      userText.toLowerCase() === 'ты') {
     return ctx.reply('Нейросеть.');
   }
   
   if (!MISTRAL_KEY) {
-    return ctx.reply('API ключ Mistral не настроен. Добавь MISTRAL_API_KEY в настройки Vercel.');
+    return ctx.reply('API ключ не настроен.');
   }
   
-  const waitMsg = await ctx.reply('💭Думаю..');
+  const waitMsg = await ctx.reply('Думаю...');
   
   try {
-    addToHistory(userId, 'user', ctx.message.text);
-    const historyMessages = getUserHistory(userId);
+    addToHistory(userId, 'user', userText);
+    const history = getUserHistory(userId);
     
-    const result = await queryMistral(historyMessages);
+    const result = await queryMistral(history);
+    
+    await ctx.deleteMessage(waitMsg.message_id);
     
     if (result.success) {
       addToHistory(userId, 'assistant', result.answer);
-      await ctx.deleteMessage(waitMsg.message_id);
-      await ctx.reply(result.answer);
+      
+      // Разбиваем длинные ответы
+      if (result.answer.length > 2000) {
+        const parts = [];
+        let currentPart = '';
+        const lines = result.answer.split('\n');
+        
+        for (const line of lines) {
+          if ((currentPart + line + '\n').length > 2000) {
+            parts.push(currentPart);
+            currentPart = line + '\n';
+          } else {
+            currentPart += line + '\n';
+          }
+        }
+        
+        if (currentPart) parts.push(currentPart);
+        
+        for (let i = 0; i < parts.length; i++) {
+          await ctx.reply(parts[i].trim());
+          if (i < parts.length - 1) await new Promise(resolve => setTimeout(resolve, 300));
+        }
+      } else {
+        await ctx.reply(result.answer);
+      }
     } else {
-      await ctx.deleteMessage(waitMsg.message_id);
-      ctx.reply(result.answer);
+      await ctx.reply(`Ошибка: ${result.answer}`);
     }
     
   } catch (error) {
-    if (waitMsg) {
-      try {
-        await ctx.deleteMessage(waitMsg.message_id);
-      } catch (e) {}
-    }
+    try {
+      await ctx.deleteMessage(waitMsg.message_id);
+    } catch (e) {}
     
-    ctx.reply(`Что-то пошло не так: ${error.message}\nПопробуй еще раз.`);
+    ctx.reply(`Ошибка: ${error.message}`);
   }
 });
 
-// ========== ОБРАБОТКА ФОТО ==========
+// ========== ФОТО ==========
 bot.on('photo', async (ctx) => {
   const userId = ctx.from.id;
   
@@ -240,9 +363,30 @@ bot.on('photo', async (ctx) => {
     
     addToHistory(userId, 'user', `[Фото: ${caption || 'задача'}]`);
     
-    const prompt = caption ? 
-      `На фото задание. Вопрос: "${caption}". Реши задание и ответь на вопрос. Без звездочек в ответе, формулы пиши нормально.` :
-      `На фото какое-то задание или текст. Реши что нужно решить, ответь на вопросы если они есть. Без лишних описаний и звездочек. Формулы пиши как: y = x² + 2x + 1`;
+    const prompt = `Реши задачу на фото. ${caption ? `Вопрос: "${caption}".` : ''}
+    
+ОЧЕНЬ ВАЖНО:
+1. ОТВЕЧАЙ ТОЛЬКО РЕШЕНИЕМ И ОТВЕТОМ
+2. НИКАКИХ "Дано:", "Решение:", "Ответ:" в начале
+3. НИКАКИХ ЗВЕЗДОЧЕК (*) В ТЕКСТЕ
+4. ФОРМУЛЫ ПИШИ НОРМАЛЬНО: x², y = kx + b
+5. ЕСЛИ ЗАДАЧА НА СОПОСТАВЛЕНИЕ (А, Б, В и 1, 2, 3) — ПИШИ ТОЛЬКО:
+А → 1
+Б → 2
+В → 3
+
+ПРИМЕР ПРАВИЛЬНОГО ОТВЕТА ДЛЯ УРАВНЕНИЯ:
+1/(x-1)² + 3/(x-1) - 10 = 0
+Замена: y = 1/(x-1)
+y² + 3y - 10 = 0
+D = 9 + 40 = 49
+y = (-3 ± 7)/2
+y₁ = 2, y₂ = -5
+
+1) 1/(x-1) = 2 → x = 3/2
+2) 1/(x-1) = -5 → x = 4/5
+
+Ответ: x = 3/2 и x = 4/5`;
     
     const response = await axios.post(
       'https://api.mistral.ai/v1/chat/completions',
@@ -257,8 +401,9 @@ bot.on('photo', async (ctx) => {
             ]
           }
         ],
-        max_tokens: 1500,
-        temperature: 0.4
+        max_tokens: 1000,
+        temperature: 0.2, // Очень низкая температура для точности
+        frequency_penalty: 0.7
       },
       {
         headers: {
@@ -269,68 +414,15 @@ bot.on('photo', async (ctx) => {
       }
     );
     
-    const analysis = cleanText(response.data.choices[0].message.content);
+    const analysis = formatAnswer(response.data.choices[0].message.content);
     addToHistory(userId, 'assistant', analysis);
     
     await ctx.deleteMessage(waitMsg.message_id);
-    
-    // Форматируем ответ для задач с сопоставлением
-    let answer = analysis;
-    
-    // Если это задача на сопоставление (А-Б-В и 1-2-3)
-    if ((answer.includes('А') && answer.includes('Б') && answer.includes('В')) ||
-        (answer.includes('График А') || answer.includes('График Б') || answer.includes('График В'))) {
-      
-      // Создаем чистый формат
-      const lines = answer.split('\n').filter(line => line.trim());
-      const cleanLines = lines.map(line => {
-        // Убираем все маркдаун
-        line = line.replace(/\*\*/g, '');
-        line = line.replace(/\*/g, '');
-        
-        // Форматируем сопоставления
-        if (line.includes('А') || line.includes('Б') || line.includes('В')) {
-          line = line.replace(/—/g, '→').replace(/соответствует/g, '→');
-          line = line.replace(/\s+/g, ' ').trim();
-        }
-        
-        return line;
-      });
-      
-      answer = cleanLines.join('\n');
-      
-      // Добавляем итоговый ответ если его нет
-      if (!answer.includes('Ответ:') && !answer.includes('А →')) {
-        const matches = [];
-        if (answer.includes('А') && answer.includes('1')) matches.push('А → 1');
-        if (answer.includes('Б') && answer.includes('2')) matches.push('Б → 2');
-        if (answer.includes('В') && answer.includes('3')) matches.push('В → 3');
-        if (answer.includes('А') && answer.includes('3')) matches.push('А → 3');
-        if (answer.includes('Б') && answer.includes('1')) matches.push('Б → 1');
-        if (answer.includes('В') && answer.includes('2')) matches.push('В → 2');
-        
-        if (matches.length > 0) {
-          answer += '\n\nОтвет:\n' + matches.join('\n');
-        }
-      }
-    }
-    
-    // Если ответ слишком длинный, упрощаем
-    if (answer.length > 1500) {
-      const importantParts = answer.split('\n').filter(line => 
-        line.includes('Ответ:') || 
-        line.includes('→') ||
-        line.includes('=') ||
-        line.length < 80
-      );
-      answer = importantParts.join('\n') || answer.substring(0, 1500) + '...';
-    }
-    
-    await ctx.reply(answer);
+    await ctx.reply(analysis);
     
   } catch (error) {
     await ctx.deleteMessage(waitMsg.message_id);
-    ctx.reply('Не получилось разобрать фото. Попробуй еще раз или опиши что там.');
+    ctx.reply('Не разобрал фото. Попробуй еще раз или опиши текстом.');
   }
 });
 
@@ -338,8 +430,8 @@ bot.on('photo', async (ctx) => {
 module.exports = async (req, res) => {
   if (req.method === 'GET') {
     return res.status(200).json({
-      status: 'Normal Telegram Bot',
-      style: 'Clean text, no stars, no bullshit',
+      status: 'Telegram Math Bot',
+      style: 'Кратко, по делу, без воды',
       timestamp: new Date().toISOString()
     });
   }
@@ -348,7 +440,7 @@ module.exports = async (req, res) => {
     await bot.handleUpdate(req.body);
     res.status(200).json({ ok: true });
   } catch (error) {
-    console.error('Error:', error);
+    console.error('Webhook error:', error);
     res.status(500).json({ error: error.message });
   }
 };
