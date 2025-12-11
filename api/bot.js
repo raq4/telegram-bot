@@ -4,246 +4,181 @@ const axios = require('axios');
 const bot = new Telegraf(process.env.TELEGRAM_TOKEN);
 const MISTRAL_KEY = process.env.MISTRAL_API_KEY;
 
-// ========== МОЙ СТИЛЬ ==========
-const MY_STYLE_PROMPT = `Ты — точный, технический ассистент в стиле эксперта из IT-индустрии.
+// ========== СТИЛЬ DEEPSEEK (МОЙ ТОЧНЫЙ СТИЛЬ) ==========
+const DEEPSEEK_STYLE = `Ты — ассистент DeepSeek. Ты говоришь ТОЧНО в моем стиле.
 
-ТВОЙ ХАРАКТЕР:
-• Говоришь прямо по делу, без лишних слов
-• Даешь глубокие технические ответы
-• Объясняешь сложное простыми словами, но не упрощаешь
-• Если не знаешь — говоришь честно, но предлагаешь где найти
-• Любишь код, алгоритмы, технологии
-• Ненавидишь воду и общие фразы
-• Отвечаешь как senior developer
+МОЙ СТИЛЬ ОБЩЕНИЯ:
+1. **ПРОФЕССИОНАЛЬНО И ДРУЖЕЛЮБНО**:
+   - Вежливый, но без излишней формальности
+   - Поддерживающий, но не панибратский
+   - Технически точный, но доступный
 
-СТИЛЬ ОБЩЕНИЯ:
-- Короткие, емкие ответы
-- Технически точные формулировки
-- Примеры кода когда уместно
-- Без "привет, как дела, могу я помочь"
-- Без шаблонных фраз
-- По делу, сразу к сути
+2. **СТРУКТУРА ОТВЕТОВ**:
+   - Начинаю с понимания проблемы
+   - Даю четкий, структурированный ответ
+   - Использую эмодзи для навигации 🎯 🔧 📝
+   - Делю на логические блоки
+   - Заканчиваю готовым решением
 
-ПРИМЕРЫ ПРАВИЛЬНЫХ ОТВЕТОВ:
-❌ НЕПРАВИЛЬНО: "Привет! Я могу помочь вам с этим вопросом о программировании. Давайте рассмотрим..."
-✅ ПРАВИЛЬНО: "Вот решение на Python: [код]. Сложность O(n). Альтернатива: [вариант]."
+3. **КОНКРЕТНЫЕ ФРАЗЫ КОТОРЫЕ Я ИСПОЛЬЗУЮ**:
+   ✅ "Отлично! Давайте разберемся..."
+   ✅ "Понял вашу задачу. Вот решение:"
+   ✅ "Сначала проверьте..."
+   ✅ "Вот полный код:"
+   ✅ "Итак, по шагам:"
+   ✅ "🎯 Кратко:"
+   ✅ "🔧 Что нужно сделать:"
+   ✅ "📝 Пример кода:"
+   ✅ "🚀 После этого:"
+   ✅ "✅ Проверьте что:"
 
-❌ НЕПРАВИЛЬНО: "Это интересный вопрос о математике. Я с удовольствием помогу вам разобраться..."
-✅ ПРАВИЛЬНО: "Уравнение решается через дискриминант: D = b² - 4ac. Для твоего случая: [решение]."
+4. **КАК Я ОБРАЩАЮСЬ**:
+   - Использую "вы" (вежливо)
+   - Иногда "ты" (если чувствую неформальную обстановку)
+   - Никогда "bro", "чувак", "братан"
+   - Никогда снисходительный тон
 
-❌ НЕПРАВИЛЬНО: "Спасибо за ваш вопрос! Я здесь чтобы помочь..."
-✅ ПРАВИЛЬНО: "API ключ не настроен. Добавь MISTRAL_API_KEY в Environment Variables Vercel."
+5. **ФОРМАТИРОВАНИЕ**:
+   • Использую markdown
+   • Код в блоках \`\`\`
+   • Списки через дефисы или цифры
+   • Эмодзи для акцентов 🚨 💡 ⚠️ ✅
 
-ФОРМАТИРОВАНИЕ:
-• Код — в отдельных блоках с указанием языка
-• Важные термины — жирным
-• Списки — через дефис
-• Математика — формулами
-• Без смайлов в технических ответах
+6. **ПРИМЕР МОЕГО ОТВЕТА**:
+   "Понял задачу! Нужно создать Telegram бота с Mistral AI.
 
-НАЧАЛО ДИАЛОГА:
-Когда пользователь пишет /start — просто скажи что бот работает. Никаких длинных приветствий.
+   🎯 **Что делаем:**
+   1. Создаем бота в @BotFather
+   2. Получаем API ключ Mistral
+   3. Разворачиваем на Vercel
 
-ТВОЯ ЦЕЛЬ: Быть самым полезным и техничным ботом. Как senior developer который помогает junior-у.`;
+   🔧 **Код бота:**
+   \`\`\`javascript
+   const bot = new Telegraf(process.env.TOKEN);
+   \`\`\`
+
+   ✅ **Проверьте:**
+   - Токен добавлен в Environment Variables
+   - Вебхук настроен
+
+   Готовы продолжить?"
+
+ТВОЯ ЗАДАЧА: Отвечать ТОЧНО в этом стиле. Будь helpful, technical, structured, friendly.`;
 
 // ========== ХРАНЕНИЕ ==========
 const userHistories = new Map();
 
-// Получить историю
 function getUserHistory(userId) {
   if (!userHistories.has(userId)) {
     userHistories.set(userId, [
-      { role: 'system', content: MY_STYLE_PROMPT }
+      { role: 'system', content: DEEPSEEK_STYLE }
     ]);
   }
-  return userHistories.get(userId).slice(-8); // Мало истории для точности
+  return userHistories.get(userId).slice(-10);
 }
 
-// Добавить в историю
 function addToHistory(userId, role, content) {
   if (!userHistories.has(userId)) {
     userHistories.set(userId, [
-      { role: 'system', content: MY_STYLE_PROMPT }
+      { role: 'system', content: DEEPSEEK_STYLE }
     ]);
   }
   
   const history = userHistories.get(userId);
   history.push({ role, content });
   
-  // Держим историю короткой для точности
-  if (history.length > 9) {
-    history.splice(1, 1); // Удаляем самое старое сообщение
+  if (history.length > 11) {
+    history.splice(1, 1);
   }
 }
 
-// Очистить историю
 function clearUserHistory(userId) {
   userHistories.delete(userId);
 }
 
 // ========== ФУНКЦИИ ==========
 
-// Анализ сложности вопроса
-function getQuestionType(text) {
-  const textLower = text.toLowerCase();
+// Определить тип запроса
+function getRequestType(text) {
+  const lower = text.toLowerCase();
   
-  // Программирование
-  if (textLower.includes('код') || textLower.includes('алгоритм') || 
-      textLower.includes('функци') || textLower.match(/python|javascript|java|c\+\+|html|css|sql/)) {
+  if (lower.includes('привет') || lower.includes('начать') || lower.includes('/start')) {
+    return 'greeting';
+  }
+  
+  if (lower.includes('код') || lower.includes('программир') || lower.includes('алгоритм')) {
     return 'code';
   }
   
-  // Математика
-  if (textLower.includes('реши') || textLower.includes('уравнен') || 
-      textLower.includes('задач') || textLower.match(/\d[\+\-\*\/\^]\d/) ||
-      textLower.includes('математик')) {
+  if (lower.includes('реши') || lower.includes('задач') || lower.includes('математ')) {
     return 'math';
   }
   
-  // Технические вопросы
-  if (textLower.includes('api') || textLower.includes('сервер') || 
-      textLower.includes('база') || textLower.includes('бот') ||
-      textLower.includes('vercel') || textLower.includes('github')) {
-    return 'tech';
+  if (lower.includes('ошибк') || lower.includes('не работ') || lower.includes('падает')) {
+    return 'error';
   }
   
-  // Фото/изображения
-  if (textLower.includes('фото') || textLower.includes('изображен') || 
-      textLower.includes('картинк')) {
-    return 'photo';
+  if (lower.includes('как') || lower.includes('инструкц') || lower.includes('шаг')) {
+    return 'tutorial';
   }
   
   return 'general';
 }
 
-// Получить промпт для типа вопроса
-function getPromptForType(type, hasImage = false) {
-  const basePrompt = MY_STYLE_PROMPT;
+// Форматировать ответ в моем стиле
+function formatDeepSeekResponse(text, requestType) {
+  // Убираем любые шаблонные фразы которые НЕ в моем стиле
+  const notMyStyle = [
+    /Я здесь, чтобы предоставить/gi,
+  ];
   
-  const typePrompts = {
-    code: `СЕЙЧАС: Отвечаешь на вопрос о программировании.
-• Сразу давай рабочий код
-• Указывай язык программирования
-• Объясняй сложные моменты в комментариях
-• Предлагай альтернативные решения
-• Указывай сложность алгоритма (Big O)
-• Тестируй код в уме перед отправкой`,
-    
-    math: `СЕЙЧАС: Решаешь математическую задачу.
-• Показывай решение по шагам
-• Используй математические обозначения
-• Проверяй вычисления
-• Давай окончательный ответ четко
-• Если есть несколько решений — покажи все`,
-    
-    tech: `СЕЙЧАС: Отвечаешь на технический/IT вопрос.
-• Будь максимально точным
-• Давай конкретные команды/настройки
-• Ссылайся на документацию если нужно
-• Предупреждай о возможных проблемах
-• Давай практические советы`,
-    
-    photo: `СЕЙЧАС: Анализируешь изображение.
-• Если фото содержит код/текст — читай и решай
-• Если фото с задачей — решай задачу
-• Если общее фото — описывай только технически важное
-• Не описывай очевидное ("на фото белый лист")
-• Решай, а не описывай`,
-    
-    general: `СЕЙЧАС: Отвечаешь на общий вопрос.
-• Отвечай по сути
-• Без лишних вступлений
-• Если знаешь тему глубоко — давай детали
-• Если не уверен — говори честно
-• Ссылайся на проверенные источники`
-  };
+  let formatted = text;
+  notMyStyle.forEach(regex => {
+    formatted = formatted.replace(regex, '');
+  });
   
-  let prompt = basePrompt + '\n\n' + (typePrompts[type] || typePrompts.general);
-  
-  if (hasImage) {
-    prompt += '\n\nЕСТЬ ФОТО: Анализируй содержимое, решай задачи на фото, отвечай на вопросы по фото.';
-  }
-  
-  return prompt;
-}
-
-// Запрос к AI
-async function queryMistralAI(messages, questionType, hasImage = false) {
-  try {
-    // Обновляем системный промпт для этого вопроса
-    if (messages[0].role === 'system') {
-      messages[0].content = getPromptForType(questionType, hasImage);
+  // Добавляем структуру если ее нет
+  if (requestType === 'tutorial' && !formatted.includes('🎯') && !formatted.includes('1.')) {
+    const lines = formatted.split('\n').filter(l => l.trim());
+    if (lines.length > 3) {
+      formatted = `🎯 **План действий:**\n\n` +
+                  lines.map((line, i) => `${i + 1}. ${line}`).join('\n') +
+                  `\n\n✅ **После этого проверьте работоспособность.**`;
     }
-    
-    const model = hasImage ? 'mistral-small-latest' : 
-                 (questionType === 'code' || questionType === 'math') ? 'mistral-medium-latest' : 'mistral-small-latest';
-    
-    const response = await axios.post(
-      'https://api.mistral.ai/v1/chat/completions',
-      {
-        model: model,
-        messages: messages,
-        max_tokens: questionType === 'code' ? 2000 : 1500,
-        temperature: questionType === 'code' ? 0.2 : 0.5, // Для кода меньше креативности
-        top_p: 0.9,
-        frequency_penalty: 0.1,
-        presence_penalty: 0.1
-      },
-      {
-        headers: {
-          'Authorization': `Bearer ${MISTRAL_KEY}`,
-          'Content-Type': 'application/json'
-        },
-        timeout: 40000
-      }
-    );
-    
-    return {
-      success: true,
-      answer: response.data.choices[0].message.content,
-      model: model,
-      tokens: response.data.usage?.total_tokens
-    };
-    
-  } catch (error) {
-    console.error('API Error:', error.message);
-    return {
-      success: false,
-      error: 'Ошибка API',
-      suggestion: 'Попробуй позже или проверь ключ Mistral.'
-    };
   }
+  
+  if (requestType === 'code' && formatted.includes('```')) {
+    formatted = formatted.replace(/```(\w+)?\n/g, '📝 **Код на $1:**\n```$1\n');
+  }
+  
+  if (requestType === 'error') {
+    if (!formatted.includes('🔧') && !formatted.includes('✅')) {
+      formatted = `🔧 **Проблема:** ${formatted.split('\n')[0]}\n\n` +
+                  `✅ **Решение:**\n${formatted.substring(formatted.indexOf('\n') + 1)}`;
+    }
+  }
+  
+  return formatted.trim();
 }
 
-// Анализ фото с задачами
-async function analyzePhotoWithTasks(imageUrl, questionType) {
+// Запрос к Mistral
+async function queryMistral(messages) {
   try {
-    const prompt = questionType === 'math' ? 
-      `На фото математические задачи. РЕШИ ИХ. Давай ответы по порядку, без лишних описаний. Только решение.` :
-      `На фото техническая информация. Проанализируй и дай ответ. Без описания фото.`;
-    
     const response = await axios.post(
       'https://api.mistral.ai/v1/chat/completions',
       {
         model: 'mistral-small-latest',
-        messages: [
-          {
-            role: 'user',
-            content: [
-              { type: 'text', text: prompt },
-              { type: 'image_url', image_url: { url: imageUrl } }
-            ]
-          }
-        ],
-        max_tokens: 2000,
-        temperature: 0.3
+        messages: messages,
+        max_tokens: 1800,
+        temperature: 0.7,
+        top_p: 0.9
       },
       {
         headers: {
           'Authorization': `Bearer ${MISTRAL_KEY}`,
           'Content-Type': 'application/json'
         },
-        timeout: 60000
+        timeout: 30000
       }
     );
     
@@ -255,98 +190,68 @@ async function analyzePhotoWithTasks(imageUrl, questionType) {
   } catch (error) {
     return {
       success: false,
-      error: 'Не удалось прочитать фото',
-      suggestion: 'Сфотографируй четче или опиши задачу текстом.'
+      error: 'Ошибка подключения к AI',
+      suggestion: 'Проверьте API ключ Mistral и попробуйте позже.'
     };
   }
 }
 
-// Форматирование ответа в моем стиле
-function formatMyStyle(text, questionType) {
-  let formatted = text;
-  
-  // Убираем шаблонные фразы
-  const templatePhrases = [
-    'Привет!', 'Здравствуйте!', 'Как я могу помочь', 'Я здесь, чтобы',
-    'Спасибо за вопрос', 'Рад помочь', 'Могу я помочь', 'Не стесняйтесь',
-    'Это интересный вопрос', 'Давайте рассмотрим', 'Я с удовольствием'
-  ];
-  
-  templatePhrases.forEach(phrase => {
-    const regex = new RegExp(`${phrase}[^.!?]*[.!?]`, 'gi');
-    formatted = formatted.replace(regex, '');
-  });
-  
-  // Форматирование кода
-  if (questionType === 'code') {
-    formatted = formatted.replace(/```(\w+)?\n([\s\S]*?)```/g, (match, lang, code) => {
-      return `\`\`\`${lang || ''}\n${code.trim()}\n\`\`\``;
-    });
-  }
-  
-  // Форматирование математики
-  if (questionType === 'math') {
-    formatted = formatted.replace(/\$(.*?)\$/g, '`$1`');
-  }
-  
-  // Убираем двойные переносы
-  formatted = formatted.replace(/\n{3,}/g, '\n\n');
-  
-  return formatted.trim();
-}
-
 // ========== КОМАНДЫ ==========
 
-// /start - КОРОТКО
+// /start
 bot.start((ctx) => {
   clearUserHistory(ctx.from.id);
-  ctx.reply(`🤖 Бот работает.\n/help - команды\n/clear - сброс\n\nОтправляй вопросы — отвечу без воды.`);
+  ctx.reply(`👋 Привет! Я бот с стилем общения DeepSeek.
+
+🎯 **Что я умею:**
+• Отвечать на технические вопросы
+• Помогать с программированием  
+• Решать математические задачи
+• Анализировать изображения
+
+🔧 **Как использовать:**
+Просто задайте вопрос — отвечу подробно и по делу.
+
+📝 **Команды:**
+/help — помощь
+/clear — очистить историю
+
+Готов помочь!`, { parse_mode: 'Markdown' });
 });
 
-// /help - ТОЧНО
+// /help
 bot.help((ctx) => {
-  ctx.reply(`Команды:
-/clear - сбросить историю
-/code [вопрос] - для программирования
-/math [вопрос] - для математики
+  ctx.reply(`🛠️ **Помощь по боту**
 
-Отправь фото с задачей — решу.
-Пиши вопросы прямо — отвечу по делу.
+🎯 **Мой стиль общения:**
+• Вежливый и профессиональный
+• Структурированные ответы
+• Конкретные решения
+• С примерами кода
 
-Примеры:
-"Как сделать Telegram бота?"
-"Реши: 2x² = x"
-Отправь фото с кодом/задачей`);
+📋 **Примеры вопросов:**
+"Как создать Telegram бота?"
+"Помоги с кодом на Python"
+"Реши математическую задачу"
+Отправьте фото с задачей
+
+🔧 **Техническая поддержка:**
+Если бот не работает:
+1. Проверьте API ключ Mistral
+2. Убедитесь что вебхук настроен
+3. Посмотрите логи в Vercel
+
+💡 **Совет:** Задавайте конкретные вопросы — получу точные ответы!`, { 
+    parse_mode: 'Markdown' 
+  });
 });
 
-// /clear - ПРЯМО
+// /clear
 bot.command('clear', (ctx) => {
   clearUserHistory(ctx.from.id);
-  ctx.reply('История сброшена.');
-});
-
-// /code - для программирования
-bot.command('code', (ctx) => {
-  const question = ctx.message.text.replace('/code', '').trim();
-  if (!question) {
-    ctx.reply('Напиши вопрос о программировании после /code');
-    return;
-  }
-  
-  ctx.reply(`💻 Вопрос о коде: "${question}"\nДумаю...`);
-  
-  // Обработка будет в основном обработчике
-});
-
-// /math - для математики
-bot.command('math', (ctx) => {
-  const question = ctx.message.text.replace('/math', '').trim();
-  if (!question) {
-    ctx.reply('Напиши математическую задачу после /math');
-    return;
-  }
-  
-  ctx.reply(`🧮 Задача: "${question}"\nРешаю...`);
+  ctx.reply('🔄 **История диалога очищена.**\n\nМожем начать новый разговор!', {
+    parse_mode: 'Markdown'
+  });
 });
 
 // ========== ОБРАБОТКА ТЕКСТА ==========
@@ -357,51 +262,74 @@ bot.on('text', async (ctx) => {
   if (userText.startsWith('/')) return;
   
   if (!MISTRAL_KEY) {
-    return ctx.reply('Mistral API ключ не настроен. Добавь MISTRAL_API_KEY в Vercel Environment Variables.');
+    return ctx.reply(`🔧 **Проблема с настройкой**
+
+API ключ Mistral не настроен.
+
+🎯 **Что сделать:**
+1. Зайдите в Vercel → ваш проект
+2. Откройте Settings → Environment Variables
+3. Добавьте переменную:
+   • Name: \`MISTRAL_API_KEY\`
+   • Value: ваш ключ от Mistral AI
+4. Перезапустите деплой
+
+После этого бот заработает!`, { parse_mode: 'Markdown' });
   }
   
-  // Определяем тип вопроса
-  const questionType = getQuestionType(userText);
-  const typeIcons = {
-    code: '💻',
-    math: '🧮', 
-    tech: '🔧',
-    photo: '📸',
-    general: '🤔'
-  };
-  
-  const waitMsg = await ctx.reply(`${typeIcons[questionType]} Анализирую...`);
+  const requestType = getRequestType(userText);
+  const typingMsg = await ctx.reply('💭 Анализирую вопрос...');
   
   try {
     addToHistory(userId, 'user', userText);
     const historyMessages = getUserHistory(userId);
     
-    const aiResult = await queryMistralAI(historyMessages, questionType);
+    const aiResult = await queryMistral(historyMessages);
     
     if (aiResult.success) {
       addToHistory(userId, 'assistant', aiResult.answer);
-      await ctx.deleteMessage(waitMsg.message_id);
+      await ctx.deleteMessage(typingMsg.message_id);
       
       // Форматируем в моем стиле
-      const formattedAnswer = formatMyStyle(aiResult.answer, questionType);
-      await ctx.reply(formattedAnswer, {
-        parse_mode: questionType === 'code' || questionType === 'math' ? 'Markdown' : undefined,
+      const formatted = formatDeepSeekResponse(aiResult.answer, requestType);
+      await ctx.reply(formatted, {
+        parse_mode: 'Markdown',
         disable_web_page_preview: true
       });
       
     } else {
-      await ctx.deleteMessage(waitMsg.message_id);
-      ctx.reply(`${aiResult.error} ${aiResult.suggestion}`);
+      await ctx.deleteMessage(typingMsg.message_id);
+      ctx.reply(`⚠️ **Техническая проблема**
+
+${aiResult.error}
+
+🔧 **Рекомендация:**
+${aiResult.suggestion}
+
+Попробуйте повторить вопрос через минуту.`, {
+        parse_mode: 'Markdown'
+      });
     }
     
   } catch (error) {
-    if (waitMsg) {
+    if (typingMsg) {
       try {
-        await ctx.deleteMessage(waitMsg.message_id);
+        await ctx.deleteMessage(typingMsg.message_id);
       } catch (e) {}
     }
     
-    ctx.reply(`Ошибка: ${error.message}`);
+    ctx.reply(`❌ **Произошла ошибка**
+
+${error.message}
+
+🎯 **Что можно сделать:**
+1. Проверить интернет-соединение
+2. Упростить вопрос
+3. Использовать команду /clear
+
+Попробуйте еще раз!`, {
+      parse_mode: 'Markdown'
+    });
   }
 });
 
@@ -410,55 +338,80 @@ bot.on('photo', async (ctx) => {
   const userId = ctx.from.id;
   
   if (!MISTRAL_KEY) {
-    return ctx.reply('API ключ не настроен.');
+    return ctx.reply('🔧 Настройте MISTRAL_API_KEY в Vercel.');
   }
   
-  // Проверяем подпись к фото
   const caption = ctx.message.caption || '';
-  const questionType = getQuestionType(caption) || 'math'; // По умолчанию математика
-  
-  const waitMsg = await ctx.reply('📸 Читаю фото...');
+  const waitMsg = await ctx.reply('📸 Анализирую изображение...');
   
   try {
-    // Получаем фото
     const photo = ctx.message.photo[ctx.message.photo.length - 1];
     const fileLink = await ctx.telegram.getFileLink(photo.file_id);
     const imageUrl = fileLink.href;
     
-    // Добавляем в историю
-    addToHistory(userId, 'user', `[Фото${caption ? ': ' + caption : ''}]`);
+    addToHistory(userId, 'user', `[Фото: ${caption || 'изображение'}]`);
     
-    // Анализируем фото
-    const photoResult = await analyzePhotoWithTasks(imageUrl, questionType);
-    
-    if (photoResult.success) {
-      addToHistory(userId, 'assistant', photoResult.answer);
-      await ctx.deleteMessage(waitMsg.message_id);
-      
-      // Форматируем ответ
-      let response = photoResult.answer;
-      
-      // Убираем описание если фото с задачей
-      if (questionType === 'math' && response.includes('На фото')) {
-        const lines = response.split('\n');
-        const solutionLines = lines.filter(line => 
-          !line.toLowerCase().includes('на фото') && 
-          !line.toLowerCase().includes('вижу') &&
-          !line.toLowerCase().includes('описание')
-        );
-        response = solutionLines.join('\n');
+    const response = await axios.post(
+      'https://api.mistral.ai/v1/chat/completions',
+      {
+        model: 'mistral-small-latest',
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { 
+                type: 'text', 
+                text: caption ? 
+                  `Вопрос пользователя: "${caption}". Проанализируй изображение и ответь на вопрос.` :
+                  `Проанализируй это изображение. Если есть задачи — реши их. Если есть текст — обработай его. Отвечай в стиле DeepSeek.`
+              },
+              { type: 'image_url', image_url: { url: imageUrl } }
+            ]
+          }
+        ],
+        max_tokens: 2000,
+        temperature: 0.4
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${MISTRAL_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 60000
       }
-      
-      await ctx.reply(`📝 Решение:\n\n${response.trim()}`);
-      
+    );
+    
+    const analysis = response.data.choices[0].message.content;
+    addToHistory(userId, 'assistant', analysis);
+    
+    await ctx.deleteMessage(waitMsg.message_id);
+    
+    // Форматируем анализ фото
+    let responseText = analysis;
+    
+    // Улучшаем структуру если это задачи
+    if (responseText.toLowerCase().includes('задача') || responseText.includes('решение')) {
+      responseText = `📊 **Анализ изображения:**\n\n${responseText}\n\n✅ **Задачи решены.**`;
     } else {
-      await ctx.deleteMessage(waitMsg.message_id);
-      ctx.reply(`${photoResult.error}\n${photoResult.suggestion}`);
+      responseText = `📸 **Анализ изображения:**\n\n${responseText}`;
     }
+    
+    await ctx.reply(responseText, {
+      parse_mode: 'Markdown',
+      disable_web_page_preview: true
+    });
     
   } catch (error) {
     await ctx.deleteMessage(waitMsg.message_id);
-    ctx.reply('Не удалось обработать фото. Попробуй сфотографировать четче или описать текстом.');
+    
+    ctx.reply(`⚠️ **Не удалось проанализировать фото**
+
+${error.message}
+
+🎯 **Альтернатива:** 
+Опишите что на фото текстом — помогу решить задачу.`, {
+      parse_mode: 'Markdown'
+    });
   }
 });
 
@@ -466,9 +419,9 @@ bot.on('photo', async (ctx) => {
 module.exports = async (req, res) => {
   if (req.method === 'GET') {
     return res.status(200).json({
-      status: 'Expert Bot - No Bullshit Edition',
-      style: 'Technical, direct, no fluff',
-      users: userHistories.size,
+      status: 'DeepSeek-style Telegram Bot',
+      style: 'Professional, structured, helpful',
+      features: ['text_ai', 'image_analysis', 'context_memory'],
       timestamp: new Date().toISOString()
     });
   }
