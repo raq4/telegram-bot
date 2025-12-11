@@ -194,7 +194,7 @@ bot.on('text', async (ctx) => {
     return ctx.reply('API ключ Mistral не настроен. Добавь MISTRAL_API_KEY в настройки Vercel.');
   }
   
-  const waitMsg = await ctx.reply('Секунду...');
+  const waitMsg = await ctx.reply('💭Думаю..');
   
   try {
     addToHistory(userId, 'user', ctx.message.text);
