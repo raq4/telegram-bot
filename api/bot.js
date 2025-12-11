@@ -5,6 +5,49 @@ const { createCanvas } = require('canvas'); // Добавляем canvas для 
 const bot = new Telegraf(process.env.TELEGRAM_TOKEN);
 const MISTRAL_KEY = process.env.MISTRAL_API_KEY;
 
+// ========== АДМИН СИСТЕМА ==========
+const ADMINS = new Set([815509230]); // Ваш ID по умолчанию
+const ADMIN_PASSWORDS = new Map(); // Хранилище паролей для временного доступа
+
+// Генерация случайного пароля
+function generatePassword() {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  let password = '';
+  for (let i = 0; i < 8; i++) {
+    password += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return password;
+}
+
+// Проверка прав администратора
+function isAdmin(userId) {
+  return ADMINS.has(parseInt(userId));
+}
+
+// Сохранение данных в файл (для Vercel/Serverless)
+function saveAdmins() {
+  // В serverless среде используем process.env для хранения
+  const adminsArray = Array.from(ADMINS);
+  process.env.BOT_ADMINS = JSON.stringify(adminsArray);
+  console.log('Admins saved:', adminsArray);
+}
+
+// Загрузка данных из process.env
+function loadAdmins() {
+  try {
+    if (process.env.BOT_ADMINS) {
+      const adminsArray = JSON.parse(process.env.BOT_ADMINS);
+      adminsArray.forEach(id => ADMINS.add(parseInt(id)));
+      console.log('Admins loaded:', adminsArray);
+    }
+  } catch (e) {
+    console.log('Error loading admins:', e.message);
+  }
+}
+
+// Инициализация при запуске
+loadAdmins();
+
 // ========== СТРОГИЙ СТИЛЬ ==========
 const STRICT_STYLE = `ТЫ — ПОМОЩНИК ДЛЯ РЕШЕНИЯ ЗАДАЧ.
 САМЫЙ САМЫЙ ВАЖНЫЙ ОТВЕТ:
@@ -187,6 +230,278 @@ bot.command('clear', (ctx) => {
   ctx.reply('История очищена🧹.');
 });
 
+// ========== АДМИН КОМАНДЫ ==========
+bot.command('admin', (ctx) => {
+  const userId = ctx.from.id;
+  
+  if (!isAdmin(userId)) {
+    return ctx.reply('⚠️ У вас нет прав администратора.');
+  }
+  
+  ctx.reply(
+    `👑 Админ-панель\n\n` +
+    `Доступные команды:\n` +
+    `/admins - список администраторов\n` +
+    `/add_admin - добавить администратора\n` +
+    `/remove_admin [ID] - удалить администратора\n` +
+    `/generate_invite - создать код приглашения\n` +
+    `/stats - статистика бота\n` +
+    `/broadcast [сообщение] - рассылка всем пользователям\n\n` +
+    `Ваш ID: ${userId}\n` +
+    `Всего админов: ${ADMINS.size}`
+  );
+});
+
+bot.command('admins', (ctx) => {
+  if (!isAdmin(ctx.from.id)) {
+    return ctx.reply('⚠️ У вас нет прав администратора.');
+  }
+  
+  const adminList = Array.from(ADMINS)
+    .map(id => `• ${id} ${id === 815509230 ? '(создатель)' : ''}`)
+    .join('\n');
+  
+  ctx.reply(`📋 Список администраторов (${ADMINS.size}):\n\n${adminList}`);
+});
+
+bot.command('add_admin', (ctx) => {
+  if (!isAdmin(ctx.from.id)) {
+    return ctx.reply('⚠️ У вас нет прав администратора.');
+  }
+  
+  // Генерируем временный пароль для добавления админа
+  const password = generatePassword();
+  const expires = Date.now() + 30 * 60 * 1000; // 30 минут
+  ADMIN_PASSWORDS.set(password, { expires, creator: ctx.from.id });
+  
+  ctx.reply(
+    `🔑 Код для добавления администратора:\n\n` +
+    `Пароль: <code>${password}</code>\n` +
+    `Действует: 30 минут\n\n` +
+    `Для добавления администратора новый пользователь должен отправить:\n` +
+    `<code>/invite ${password}</code>\n\n` +
+    `Или просто перешлите это сообщение новому администратору.`,
+    { parse_mode: 'HTML' }
+  );
+});
+
+bot.command('invite', (ctx) => {
+  const userId = ctx.from.id;
+  const args = ctx.message.text.split(' ');
+  
+  if (args.length < 2) {
+    return ctx.reply('Использование: /invite [код]');
+  }
+  
+  const password = args[1];
+  const inviteData = ADMIN_PASSWORDS.get(password);
+  
+  if (!inviteData) {
+    return ctx.reply('❌ Неверный или просроченный код.');
+  }
+  
+  if (Date.now() > inviteData.expires) {
+    ADMIN_PASSWORDS.delete(password);
+    return ctx.reply('❌ Срок действия кода истек.');
+  }
+  
+  if (isAdmin(userId)) {
+    return ctx.reply('✅ Вы уже администратор.');
+  }
+  
+  // Добавляем в админы
+  ADMINS.add(userId);
+  ADMIN_PASSWORDS.delete(password);
+  saveAdmins();
+  
+  ctx.reply(
+    `✅ Вы стали администратором!\n\n` +
+    `Доступные команды:\n` +
+    `/admin - панель управления\n` +
+    `/admins - список администраторов\n` +
+    `/stats - статистика бота\n\n` +
+    `Ваш ID: ${userId}`
+  );
+  
+  // Уведомляем создателя кода
+  try {
+    ctx.telegram.sendMessage(
+      inviteData.creator,
+      `✅ Пользователь @${ctx.from.username || 'без username'} (ID: ${userId}) активировал код приглашения и стал администратором.`
+    );
+  } catch (e) {
+    console.log('Не удалось уведомить создателя кода:', e.message);
+  }
+});
+
+bot.command('remove_admin', (ctx) => {
+  if (!isAdmin(ctx.from.id)) {
+    return ctx.reply('⚠️ У вас нет прав администратора.');
+  }
+  
+  const args = ctx.message.text.split(' ');
+  
+  if (args.length < 2) {
+    return ctx.reply('Использование: /remove_admin [ID]');
+  }
+  
+  const targetId = parseInt(args[1]);
+  
+  if (isNaN(targetId)) {
+    return ctx.reply('❌ Неверный ID.');
+  }
+  
+  if (!ADMINS.has(targetId)) {
+    return ctx.reply('❌ Пользователь не является администратором.');
+  }
+  
+  if (targetId === 815509230) {
+    return ctx.reply('❌ Нельзя удалить создателя бота.');
+  }
+  
+  ADMINS.delete(targetId);
+  saveAdmins();
+  
+  ctx.reply(`✅ Администратор с ID ${targetId} удален.`);
+  
+  // Уведомляем удаленного админа
+  try {
+    ctx.telegram.sendMessage(
+      targetId,
+      `❌ Ваши права администратора были отозваны.`
+    );
+  } catch (e) {
+    console.log('Не удалось уведомить удаленного администратора:', e.message);
+  }
+});
+
+bot.command('stats', (ctx) => {
+  if (!isAdmin(ctx.from.id)) {
+    return ctx.reply('⚠️ У вас нет прав администратора.');
+  }
+  
+  const stats = {
+    users: userHistories.size,
+    admins: ADMINS.size,
+    activeInvites: ADMIN_PASSWORDS.size,
+    memoryUsage: Math.round(process.memoryUsage().heapUsed / 1024 / 1024) + 'MB'
+  };
+  
+  ctx.reply(
+    `📊 Статистика бота:\n\n` +
+    `👥 Пользователей в памяти: ${stats.users}\n` +
+    `👑 Администраторов: ${stats.admins}\n` +
+    `🔑 Активных приглашений: ${stats.activeInvites}\n` +
+    `💾 Использование памяти: ${stats.memoryUsage}\n\n` +
+    `🕒 Время работы: ${Math.round(process.uptime() / 60)} мин.`
+  );
+});
+
+bot.command('broadcast', async (ctx) => {
+  if (!isAdmin(ctx.from.id)) {
+    return ctx.reply('⚠️ У вас нет прав администратора.');
+  }
+  
+  const message = ctx.message.text.replace('/broadcast', '').trim();
+  
+  if (!message) {
+    return ctx.reply('Использование: /broadcast [сообщение]');
+  }
+  
+  const confirmMsg = await ctx.reply(
+    `📢 Подтвердите рассылку:\n\n` +
+    `${message}\n\n` +
+    `Получателей: ${userHistories.size}\n` +
+    `Отправить?`,
+    {
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: '✅ Отправить', callback_data: 'broadcast_confirm' },
+            { text: '❌ Отмена', callback_data: 'broadcast_cancel' }
+          ]
+        ]
+      }
+    }
+  );
+  
+  // Сохраняем данные для рассылки
+  ctx.session.broadcastData = {
+    message: message,
+    users: Array.from(userHistories.keys()),
+    sent: 0,
+    failed: 0,
+    confirmMsgId: confirmMsg.message_id
+  };
+});
+
+// Обработка inline кнопок
+bot.on('callback_query', async (ctx) => {
+  const data = ctx.callbackQuery.data;
+  const userId = ctx.from.id;
+  
+  if (!isAdmin(userId)) {
+    return ctx.answerCbQuery('❌ Нет прав администратора');
+  }
+  
+  if (data === 'broadcast_confirm') {
+    await ctx.answerCbQuery('Начинаю рассылку...');
+    
+    const broadcastData = ctx.session.broadcastData;
+    if (!broadcastData) {
+      return ctx.editMessageText('❌ Данные рассылки не найдены');
+    }
+    
+    const totalUsers = broadcastData.users.length;
+    
+    for (let i = 0; i < totalUsers; i++) {
+      const user = broadcastData.users[i];
+      
+      try {
+        await ctx.telegram.sendMessage(user, `📢 Рассылка:\n\n${broadcastData.message}`);
+        broadcastData.sent++;
+      } catch (error) {
+        broadcastData.failed++;
+      }
+      
+      // Обновляем статус каждые 10 отправок
+      if (i % 10 === 0 || i === totalUsers - 1) {
+        try {
+          await ctx.editMessageText(
+            `📢 Рассылка...\n\n` +
+            `Отправлено: ${broadcastData.sent}\n` +
+            `Не удалось: ${broadcastData.failed}\n` +
+            `Всего: ${totalUsers}\n` +
+            `Прогресс: ${Math.round((i + 1) / totalUsers * 100)}%`,
+            { message_id: broadcastData.confirmMsgId }
+          );
+        } catch (e) {
+          // Игнорируем ошибки редактирования
+        }
+      }
+      
+      // Задержка между сообщениями
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    
+    await ctx.editMessageText(
+      `✅ Рассылка завершена!\n\n` +
+      `📤 Успешно: ${broadcastData.sent}\n` +
+      `❌ Не удалось: ${broadcastData.failed}\n` +
+      `📊 Всего: ${totalUsers}`,
+      { message_id: broadcastData.confirmMsgId }
+    );
+    
+    // Очищаем данные рассылки
+    delete ctx.session.broadcastData;
+    
+  } else if (data === 'broadcast_cancel') {
+    await ctx.answerCbQuery('Рассылка отменена');
+    await ctx.deleteMessage();
+    delete ctx.session.broadcastData;
+  }
+});
+
 // ========== ТЕКСТ ==========
 bot.on('text', async (ctx) => {
   const userId = ctx.from.id;
@@ -194,8 +509,7 @@ bot.on('text', async (ctx) => {
   
   if (userText.startsWith('/')) return;
   
-  // ========== ИСПРАВЛЕНИЕ ==========
-  // Добавляем проверку на вопрос о создателе - ОЧЕНЬ ШИРОКУЮ
+  // ========== ОБРАБОТКА ВОПРОСОВ О СОЗДАТЕЛЕ ==========
   const creatorKeywords = [
     'кто твой создатель',
     'кто тебя создал',
@@ -224,13 +538,10 @@ bot.on('text', async (ctx) => {
   
   const lowerText = userText.toLowerCase();
   
-  // Проверяем, содержит ли вопрос о создателе - БОЛЕЕ ТОЧНОЕ СОВПАДЕНИЕ
   const isCreatorQuestion = creatorKeywords.some(keyword => {
-    // Убираем пробелы для лучшего сравнения
     const cleanText = lowerText.replace(/[.,?!]/g, '').trim();
     const cleanKeyword = keyword.toLowerCase();
     
-    // Проверяем разные варианты
     return cleanText.includes(cleanKeyword) || 
            cleanText === cleanKeyword ||
            cleanText.startsWith(cleanKeyword) ||
@@ -238,19 +549,15 @@ bot.on('text', async (ctx) => {
   });
   
   if (isCreatorQuestion) {
-    // НЕ добавляем в историю, НЕ отправляем в Mistral
-    // Отвечаем сразу и выходим
     return ctx.reply('@rafaelkazaryan');
   }
   
-  // Также проверяем просто "кто ты" - отдельно
   if (lowerText === 'кто ты' || 
       lowerText === 'ты кто' ||
       lowerText === 'кто ты?' ||
       lowerText === 'ты кто?') {
     return ctx.reply('@rafaelkazaryan');
   }
-  // ========== КОНЕЦ ИСПРАВЛЕНИЯ ==========
   
   if (!MISTRAL_KEY) {
     return ctx.reply('API ключ не настроен.');
@@ -269,23 +576,19 @@ bot.on('text', async (ctx) => {
     if (result.success) {
       addToHistory(userId, 'assistant', result.text);
       
-      // Отправляем текстовый ответ
       if (result.text) {
         await ctx.reply(result.text);
       }
       
-      // Если есть LaTeX формула, генерируем и отправляем изображение
       if (result.latex) {
         try {
           const generatingMsg = await ctx.reply('📐 Генерирую формулу...');
           
-          // Пробуем сгенерировать изображение формулы
           const imageBuffer = await generateFormulaImage(result.latex);
           
           if (imageBuffer) {
             await ctx.deleteMessage(generatingMsg.message_id);
             
-            // Отправляем изображение с формулой
             await ctx.replyWithPhoto(
               { source: Buffer.from(imageBuffer) },
               { caption: `Формула: ${result.latex}` }
@@ -373,12 +676,10 @@ $$\\frac{3}{5} \\div \\frac{4}{9} = \\frac{3}{5} \\times \\frac{9}{4} = \\frac{3
     
     await ctx.deleteMessage(waitMsg.message_id);
     
-    // Отправляем текстовый ответ
     if (processed.text) {
       await ctx.reply(processed.text);
     }
     
-    // Если есть LaTeX формула, генерируем изображение
     if (processed.latex) {
       try {
         const generatingMsg = await ctx.reply('📐 Генерирую формулу...');
@@ -411,8 +712,10 @@ $$\\frac{3}{5} \\div \\frac{4}{9} = \\frac{3}{5} \\times \\frac{9}{4} = \\frac{3
 module.exports = async (req, res) => {
   if (req.method === 'GET') {
     return res.status(200).json({
-      status: 'Telegram Math Bot',
-      features: 'Текстовые ответы + изображения с формулами',
+      status: 'Telegram Math Bot with Admin Panel',
+      features: 'Текстовые ответы + изображения с формулами + админ-панель',
+      admins: ADMINS.size,
+      users: userHistories.size,
       timestamp: new Date().toISOString()
     });
   }
