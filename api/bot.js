@@ -194,10 +194,31 @@ bot.on('text', async (ctx) => {
   
   if (userText.startsWith('/')) return;
   
-  if (userText.toLowerCase().includes('кто ты') || 
-      userText.toLowerCase().includes('ты кто')) {
-    return ctx.reply('Нейросеть.');
+  // ========== ВОТ ИСПРАВЛЕНИЕ ==========
+  // Добавляем проверку на вопрос о создателе
+  const creatorKeywords = [
+    'кто твой создатель',
+    'кто тебя создал',
+    'кто твой автор',
+    'кто тебя сделал',
+    'кто тебя разработал',
+    'твой создатель',
+    'твой автор',
+    'твой разработчик',
+    'кто тебя создал',
+    'кто тебя придумал',
+    'кто тебя написал',
+    'кто создал тебя',
+    'кто разработал тебя'
+  ];
+  
+  const lowerText = userText.toLowerCase();
+  
+  // Проверяем, содержит ли вопрос о создателе
+  if (creatorKeywords.some(keyword => lowerText.includes(keyword))) {
+    return ctx.reply('@rafaelkazaryan');
   }
+  // ========== КОНЕЦ ИСПРАВЛЕНИЯ ==========
   
   if (!MISTRAL_KEY) {
     return ctx.reply('API ключ не настроен.');
