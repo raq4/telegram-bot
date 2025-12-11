@@ -4,66 +4,24 @@ const axios = require('axios');
 const bot = new Telegraf(process.env.TELEGRAM_TOKEN);
 const MISTRAL_KEY = process.env.MISTRAL_API_KEY;
 
-// ========== СТИЛЬ DEEPSEEK (МОЙ ТОЧНЫЙ СТИЛЬ) ==========
-const DEEPSEEK_STYLE = `Ты — ассистент DeepSeek. Ты говоришь ТОЧНО в моем стиле.
+// ========== НОРМАЛЬНЫЙ СТИЛЬ ==========
+const NORMAL_STYLE = `Ты — нормальный адекватный помощник. Общаешься как умный друг, который разбирается в технологиях.
 
-МОЙ СТИЛЬ ОБЩЕНИЯ:
-1. **ПРОФЕССИОНАЛЬНО И ДРУЖЕЛЮБНО**:
-   - Вежливый, но без излишней формальности
-   - Поддерживающий, но не панибратский
-   - Технически точный, но доступный
+ТВОЙ СТИЛЬ:
+• Без пафоса и официоза
+• Говоришь по делу, но не сухо
+• Можешь немного пошутить если уместно
+• Не слишком серьезный, не слишком милый
+• Как будто помогаешь другу с кодом
 
-2. **СТРУКТУРА ОТВЕТОВ**:
-   - Начинаю с понимания проблемы
-   - Даю четкий, структурированный ответ
-   - Использую эмодзи для навигации 🎯 🔧 📝
-   - Делю на логические блоки
-   - Заканчиваю готовым решением
+КАК ОТВЕЧАТЬ:
+- Коротко и ясно
+- Если сложный вопрос — объясняй простыми словами
+- Если ошибка — говори что не так и как исправить
+- Код давай сразу рабочий
+- Без воды, сразу к сути
 
-3. **КОНКРЕТНЫЕ ФРАЗЫ КОТОРЫЕ Я ИСПОЛЬЗУЮ**:
-   ✅ "Отлично! Давайте разберемся..."
-   ✅ "Понял вашу задачу. Вот решение:"
-   ✅ "Сначала проверьте..."
-   ✅ "Вот полный код:"
-   ✅ "Итак, по шагам:"
-   ✅ "🎯 Кратко:"
-   ✅ "🔧 Что нужно сделать:"
-   ✅ "📝 Пример кода:"
-   ✅ "🚀 После этого:"
-   ✅ "✅ Проверьте что:"
-
-4. **КАК Я ОБРАЩАЮСЬ**:
-   - Использую "вы" (вежливо)
-   - Иногда "ты" (если чувствую неформальную обстановку)
-   - Никогда "bro", "чувак", "братан"
-   - Никогда снисходительный тон
-
-5. **ФОРМАТИРОВАНИЕ**:
-   • Использую markdown
-   • Код в блоках \`\`\`
-   • Списки через дефисы или цифры
-   • Эмодзи для акцентов 🚨 💡 ⚠️ ✅
-
-6. **ПРИМЕР МОЕГО ОТВЕТА**:
-   "Понял задачу! Нужно создать Telegram бота с Mistral AI.
-
-   🎯 **Что делаем:**
-   1. Создаем бота в @BotFather
-   2. Получаем API ключ Mistral
-   3. Разворачиваем на Vercel
-
-   🔧 **Код бота:**
-   \`\`\`javascript
-   const bot = new Telegraf(process.env.TOKEN);
-   \`\`\`
-
-   ✅ **Проверьте:**
-   - Токен добавлен в Environment Variables
-   - Вебхук настроен
-
-   Готовы продолжить?"
-
-ТВОЯ ЗАДАЧА: Отвечать ТОЧНО в этом стиле. Будь helpful, technical, structured, friendly.`;
+Будь собой — умный, helpful, без понтов.`;
 
 // ========== ХРАНЕНИЕ ==========
 const userHistories = new Map();
@@ -71,23 +29,23 @@ const userHistories = new Map();
 function getUserHistory(userId) {
   if (!userHistories.has(userId)) {
     userHistories.set(userId, [
-      { role: 'system', content: DEEPSEEK_STYLE }
+      { role: 'system', content: NORMAL_STYLE }
     ]);
   }
-  return userHistories.get(userId).slice(-10);
+  return userHistories.get(userId).slice(-8);
 }
 
 function addToHistory(userId, role, content) {
   if (!userHistories.has(userId)) {
     userHistories.set(userId, [
-      { role: 'system', content: DEEPSEEK_STYLE }
+      { role: 'system', content: NORMAL_STYLE }
     ]);
   }
   
   const history = userHistories.get(userId);
   history.push({ role, content });
   
-  if (history.length > 11) {
+  if (history.length > 9) {
     history.splice(1, 1);
   }
 }
@@ -98,70 +56,28 @@ function clearUserHistory(userId) {
 
 // ========== ФУНКЦИИ ==========
 
-// Определить тип запроса
-function getRequestType(text) {
-  const lower = text.toLowerCase();
-  
-  if (lower.includes('привет') || lower.includes('начать') || lower.includes('/start')) {
-    return 'greeting';
-  }
-  
-  if (lower.includes('код') || lower.includes('программир') || lower.includes('алгоритм')) {
-    return 'code';
-  }
-  
-  if (lower.includes('реши') || lower.includes('задач') || lower.includes('математ')) {
-    return 'math';
-  }
-  
-  if (lower.includes('ошибк') || lower.includes('не работ') || lower.includes('падает')) {
-    return 'error';
-  }
-  
-  if (lower.includes('как') || lower.includes('инструкц') || lower.includes('шаг')) {
-    return 'tutorial';
-  }
-  
-  return 'general';
-}
-
-// Форматировать ответ в моем стиле
-function formatDeepSeekResponse(text, requestType) {
-  // Убираем любые шаблонные фразы которые НЕ в моем стиле
-  const notMyStyle = [
-    /Я здесь, чтобы предоставить/gi,
+// Убираем всю воду из ответов
+function removeWater(text) {
+  const waterPhrases = [
+   'Могу углубиться в детали'
   ];
   
-  let formatted = text;
-  notMyStyle.forEach(regex => {
-    formatted = formatted.replace(regex, '');
+  let clean = text;
+  waterPhrases.forEach(phrase => {
+    const regex = new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '.*?(?=\\n|$)', 'gis');
+    clean = clean.replace(regex, '');
   });
   
-  // Добавляем структуру если ее нет
-  if (requestType === 'tutorial' && !formatted.includes('🎯') && !formatted.includes('1.')) {
-    const lines = formatted.split('\n').filter(l => l.trim());
-    if (lines.length > 3) {
-      formatted = `🎯 **План действий:**\n\n` +
-                  lines.map((line, i) => `${i + 1}. ${line}`).join('\n') +
-                  `\n\n✅ **После этого проверьте работоспособность.**`;
-    }
-  }
+  // Убираем лишние эмодзи
+  clean = clean.replace(/[\u{1F300}-\u{1F9FF}]{2,}/gu, '');
   
-  if (requestType === 'code' && formatted.includes('```')) {
-    formatted = formatted.replace(/```(\w+)?\n/g, '📝 **Код на $1:**\n```$1\n');
-  }
+  // Убираем двойные переносы
+  clean = clean.replace(/\n{3,}/g, '\n\n').trim();
   
-  if (requestType === 'error') {
-    if (!formatted.includes('🔧') && !formatted.includes('✅')) {
-      formatted = `🔧 **Проблема:** ${formatted.split('\n')[0]}\n\n` +
-                  `✅ **Решение:**\n${formatted.substring(formatted.indexOf('\n') + 1)}`;
-    }
-  }
-  
-  return formatted.trim();
+  return clean;
 }
 
-// Запрос к Mistral
+// Запрос к AI
 async function queryMistral(messages) {
   try {
     const response = await axios.post(
@@ -169,8 +85,8 @@ async function queryMistral(messages) {
       {
         model: 'mistral-small-latest',
         messages: messages,
-        max_tokens: 1800,
-        temperature: 0.7,
+        max_tokens: 1200,
+        temperature: 0.5,
         top_p: 0.9
       },
       {
@@ -178,20 +94,21 @@ async function queryMistral(messages) {
           'Authorization': `Bearer ${MISTRAL_KEY}`,
           'Content-Type': 'application/json'
         },
-        timeout: 30000
+        timeout: 25000
       }
     );
     
+    const answer = response.data.choices[0].message.content;
+    
     return {
       success: true,
-      answer: response.data.choices[0].message.content
+      answer: removeWater(answer)
     };
     
   } catch (error) {
     return {
       success: false,
-      error: 'Ошибка подключения к AI',
-      suggestion: 'Проверьте API ключ Mistral и попробуйте позже.'
+      answer: `Не смог получить ответ от AI. Проверь API ключ Mistral.`
     };
   }
 }
@@ -201,57 +118,18 @@ async function queryMistral(messages) {
 // /start
 bot.start((ctx) => {
   clearUserHistory(ctx.from.id);
-  ctx.reply(`👋 Привет! Я бот с стилем общения DeepSeek.
-
-🎯 **Что я умею:**
-• Отвечать на технические вопросы
-• Помогать с программированием  
-• Решать математические задачи
-• Анализировать изображения
-
-🔧 **Как использовать:**
-Просто задайте вопрос — отвечу подробно и по делу.
-
-📝 **Команды:**
-/help — помощь
-/clear — очистить историю
-
-Готов помочь!`, { parse_mode: 'Markdown' });
+  ctx.reply(`Привет. Я бот, помогаю с кодом и техническими вопросами.\n\n/help - команды\n/clear - сбросить историю\n\nСпрашивай что нужно.`);
 });
 
 // /help
 bot.help((ctx) => {
-  ctx.reply(`🛠️ **Помощь по боту**
-
-🎯 **Мой стиль общения:**
-• Вежливый и профессиональный
-• Структурированные ответы
-• Конкретные решения
-• С примерами кода
-
-📋 **Примеры вопросов:**
-"Как создать Telegram бота?"
-"Помоги с кодом на Python"
-"Реши математическую задачу"
-Отправьте фото с задачей
-
-🔧 **Техническая поддержка:**
-Если бот не работает:
-1. Проверьте API ключ Mistral
-2. Убедитесь что вебхук настроен
-3. Посмотрите логи в Vercel
-
-💡 **Совет:** Задавайте конкретные вопросы — получу точные ответы!`, { 
-    parse_mode: 'Markdown' 
-  });
+  ctx.reply(`Команды:\n/clear - сброс истории\n\nЧто умею:\n• Отвечаю на вопросы\n• Помогаю с кодом\n• Решаю задачи\n• Смотрю фото с задачами\n\nПиши вопрос — отвечу.`);
 });
 
 // /clear
 bot.command('clear', (ctx) => {
   clearUserHistory(ctx.from.id);
-  ctx.reply('🔄 **История диалога очищена.**\n\nМожем начать новый разговор!', {
-    parse_mode: 'Markdown'
-  });
+  ctx.reply('История сброшена. Можно начинать заново.');
 });
 
 // ========== ОБРАБОТКА ТЕКСТА ==========
@@ -262,74 +140,34 @@ bot.on('text', async (ctx) => {
   if (userText.startsWith('/')) return;
   
   if (!MISTRAL_KEY) {
-    return ctx.reply(`🔧 **Проблема с настройкой**
-
-API ключ Mistral не настроен.
-
-🎯 **Что сделать:**
-1. Зайдите в Vercel → ваш проект
-2. Откройте Settings → Environment Variables
-3. Добавьте переменную:
-   • Name: \`MISTRAL_API_KEY\`
-   • Value: ваш ключ от Mistral AI
-4. Перезапустите деплой
-
-После этого бот заработает!`, { parse_mode: 'Markdown' });
+    return ctx.reply('API ключ Mistral не настроен. Добавь MISTRAL_API_KEY в настройки Vercel.');
   }
   
-  const requestType = getRequestType(userText);
-  const typingMsg = await ctx.reply('💭 Анализирую вопрос...');
+  const waitMsg = await ctx.reply('Секунду...');
   
   try {
     addToHistory(userId, 'user', userText);
     const historyMessages = getUserHistory(userId);
     
-    const aiResult = await queryMistral(historyMessages);
+    const result = await queryMistral(historyMessages);
     
-    if (aiResult.success) {
-      addToHistory(userId, 'assistant', aiResult.answer);
-      await ctx.deleteMessage(typingMsg.message_id);
-      
-      // Форматируем в моем стиле
-      const formatted = formatDeepSeekResponse(aiResult.answer, requestType);
-      await ctx.reply(formatted, {
-        parse_mode: 'Markdown',
-        disable_web_page_preview: true
-      });
-      
+    if (result.success) {
+      addToHistory(userId, 'assistant', result.answer);
+      await ctx.deleteMessage(waitMsg.message_id);
+      await ctx.reply(result.answer);
     } else {
-      await ctx.deleteMessage(typingMsg.message_id);
-      ctx.reply(`⚠️ **Техническая проблема**
-
-${aiResult.error}
-
-🔧 **Рекомендация:**
-${aiResult.suggestion}
-
-Попробуйте повторить вопрос через минуту.`, {
-        parse_mode: 'Markdown'
-      });
+      await ctx.deleteMessage(waitMsg.message_id);
+      ctx.reply(result.answer);
     }
     
   } catch (error) {
-    if (typingMsg) {
+    if (waitMsg) {
       try {
-        await ctx.deleteMessage(typingMsg.message_id);
+        await ctx.deleteMessage(waitMsg.message_id);
       } catch (e) {}
     }
     
-    ctx.reply(`❌ **Произошла ошибка**
-
-${error.message}
-
-🎯 **Что можно сделать:**
-1. Проверить интернет-соединение
-2. Упростить вопрос
-3. Использовать команду /clear
-
-Попробуйте еще раз!`, {
-      parse_mode: 'Markdown'
-    });
+    ctx.reply(`Что-то пошло не так: ${error.message}\nПопробуй еще раз.`);
   }
 });
 
@@ -338,18 +176,22 @@ bot.on('photo', async (ctx) => {
   const userId = ctx.from.id;
   
   if (!MISTRAL_KEY) {
-    return ctx.reply('🔧 Настройте MISTRAL_API_KEY в Vercel.');
+    return ctx.reply('API ключ не настроен.');
   }
   
   const caption = ctx.message.caption || '';
-  const waitMsg = await ctx.reply('📸 Анализирую изображение...');
+  const waitMsg = await ctx.reply('Смотрю фото...');
   
   try {
     const photo = ctx.message.photo[ctx.message.photo.length - 1];
     const fileLink = await ctx.telegram.getFileLink(photo.file_id);
     const imageUrl = fileLink.href;
     
-    addToHistory(userId, 'user', `[Фото: ${caption || 'изображение'}]`);
+    addToHistory(userId, 'user', `[Фото: ${caption || 'задача'}]`);
+    
+    const prompt = caption ? 
+      `На фото задание. Вопрос: "${caption}". Реши задание и ответь на вопрос.` :
+      `На фото какое-то задание или текст. Реши что нужно решить, ответь на вопросы если они есть. Без лишних описаний.`;
     
     const response = await axios.post(
       'https://api.mistral.ai/v1/chat/completions',
@@ -359,17 +201,12 @@ bot.on('photo', async (ctx) => {
           {
             role: 'user',
             content: [
-              { 
-                type: 'text', 
-                text: caption ? 
-                  `Вопрос пользователя: "${caption}". Проанализируй изображение и ответь на вопрос.` :
-                  `Проанализируй это изображение. Если есть задачи — реши их. Если есть текст — обработай его. Отвечай в стиле DeepSeek.`
-              },
+              { type: 'text', text: prompt },
               { type: 'image_url', image_url: { url: imageUrl } }
             ]
           }
         ],
-        max_tokens: 2000,
+        max_tokens: 1500,
         temperature: 0.4
       },
       {
@@ -377,41 +214,34 @@ bot.on('photo', async (ctx) => {
           'Authorization': `Bearer ${MISTRAL_KEY}`,
           'Content-Type': 'application/json'
         },
-        timeout: 60000
+        timeout: 45000
       }
     );
     
-    const analysis = response.data.choices[0].message.content;
+    const analysis = removeWater(response.data.choices[0].message.content);
     addToHistory(userId, 'assistant', analysis);
     
     await ctx.deleteMessage(waitMsg.message_id);
     
-    // Форматируем анализ фото
-    let responseText = analysis;
-    
-    // Улучшаем структуру если это задачи
-    if (responseText.toLowerCase().includes('задача') || responseText.includes('решение')) {
-      responseText = `📊 **Анализ изображения:**\n\n${responseText}\n\n✅ **Задачи решены.**`;
-    } else {
-      responseText = `📸 **Анализ изображения:**\n\n${responseText}`;
+    // Если анализ получился слишком описательным, упрощаем
+    let answer = analysis;
+    if (answer.toLowerCase().includes('на фото') && answer.length > 200) {
+      const lines = answer.split('\n');
+      const solutionLines = lines.filter(line => 
+        line.includes('Ответ:') || 
+        line.includes('Решение:') ||
+        line.match(/\d+\./) ||
+        line.includes('=') ||
+        line.length < 100
+      );
+      answer = solutionLines.join('\n') || answer;
     }
     
-    await ctx.reply(responseText, {
-      parse_mode: 'Markdown',
-      disable_web_page_preview: true
-    });
+    await ctx.reply(answer);
     
   } catch (error) {
     await ctx.deleteMessage(waitMsg.message_id);
-    
-    ctx.reply(`⚠️ **Не удалось проанализировать фото**
-
-${error.message}
-
-🎯 **Альтернатива:** 
-Опишите что на фото текстом — помогу решить задачу.`, {
-      parse_mode: 'Markdown'
-    });
+    ctx.reply('Не получилось разобрать фото. Попробуй еще раз или опиши что там.');
   }
 });
 
@@ -419,9 +249,8 @@ ${error.message}
 module.exports = async (req, res) => {
   if (req.method === 'GET') {
     return res.status(200).json({
-      status: 'DeepSeek-style Telegram Bot',
-      style: 'Professional, structured, helpful',
-      features: ['text_ai', 'image_analysis', 'context_memory'],
+      status: 'Normal Telegram Bot',
+      style: 'No bullshit, straight to the point',
       timestamp: new Date().toISOString()
     });
   }
@@ -430,7 +259,7 @@ module.exports = async (req, res) => {
     await bot.handleUpdate(req.body);
     res.status(200).json({ ok: true });
   } catch (error) {
-    console.error('Webhook error:', error);
+    console.error('Error:', error);
     res.status(500).json({ error: error.message });
   }
 };
