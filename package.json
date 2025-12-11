@@ -1,7 +1,7 @@
 {
-  "name": "telegram-bot-vercel",
+  "name": "telegram-bot",
   "version": "1.0.0",
-  "description": "Telegram bot with Upstash Redis on Vercel",
+  "description": "Telegram bot on Vercel",
   "main": "api/bot.js",
   "engines": {
     "node": "24.x"
@@ -11,8 +11,9 @@
     "dev": "node api/bot.js"
   },
   "dependencies": {
-    "telegraf": "^4.15.0",
-    "@upstash/redis": "^1.22.0",
-    "dotenv": "^16.3.0"
-  }
+    "telegraf": "^4.15.0"
+  },
+  "keywords": ["telegram", "bot", "vercel"],
+  "author": "Your Name",
+  "license": "MIT"
 }
