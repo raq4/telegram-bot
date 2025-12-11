@@ -1,19 +1,10 @@
 {
   "name": "telegram-bot",
   "version": "1.0.0",
-  "description": "Telegram bot on Vercel",
-  "main": "api/bot.js",
-  "engines": {
-    "node": "24.x"
-  },
-  "scripts": {
-    "start": "node api/bot.js",
-    "dev": "node api/bot.js"
-  },
+  "engines": { "node": "24.x" },
+  "scripts": { "start": "node api/bot.js" },
   "dependencies": {
-    "telegraf": "^4.15.0"
-  },
-  "keywords": ["telegram", "bot", "vercel"],
-  "author": "Your Name",
-  "license": "MIT"
+    "telegraf": "^4.15.0",
+    "axios": "^1.6.0"
+  }
 }
