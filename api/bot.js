@@ -1,52 +1,21 @@
-const { Telegraf } = require('telegraf');
+const { Telegraf, session } = require('telegraf');
 const axios = require('axios');
-const { createCanvas } = require('canvas'); // Добавляем canvas для генерации формул
+const { createCanvas } = require('canvas');
 
 const bot = new Telegraf(process.env.TELEGRAM_TOKEN);
 const MISTRAL_KEY = process.env.MISTRAL_API_KEY;
 
-// ========== АДМИН СИСТЕМА ==========
-const ADMINS = new Set([815509230]); // Ваш ID по умолчанию
-const ADMIN_PASSWORDS = new Map(); // Хранилище паролей для временного доступа
+// Добавляем session middleware
+bot.use(session());
 
-// Генерация случайного пароля
-function generatePassword() {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  let password = '';
-  for (let i = 0; i < 8; i++) {
-    password += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return password;
-}
+// ========== ПРОСТАЯ АДМИН СИСТЕМА ==========
+// Просто храним ID админов в массиве
+const ADMINS = [815509230]; // Ваш ID - создатель по умолчанию
 
-// Проверка прав администратора
+// Функция проверки админа
 function isAdmin(userId) {
-  return ADMINS.has(parseInt(userId));
+  return ADMINS.includes(parseInt(userId));
 }
-
-// Сохранение данных в файл (для Vercel/Serverless)
-function saveAdmins() {
-  // В serverless среде используем process.env для хранения
-  const adminsArray = Array.from(ADMINS);
-  process.env.BOT_ADMINS = JSON.stringify(adminsArray);
-  console.log('Admins saved:', adminsArray);
-}
-
-// Загрузка данных из process.env
-function loadAdmins() {
-  try {
-    if (process.env.BOT_ADMINS) {
-      const adminsArray = JSON.parse(process.env.BOT_ADMINS);
-      adminsArray.forEach(id => ADMINS.add(parseInt(id)));
-      console.log('Admins loaded:', adminsArray);
-    }
-  } catch (e) {
-    console.log('Error loading admins:', e.message);
-  }
-}
-
-// Инициализация при запуске
-loadAdmins();
 
 // ========== СТРОГИЙ СТИЛЬ ==========
 const STRICT_STYLE = `ТЫ — ПОМОЩНИК ДЛЯ РЕШЕНИЯ ЗАДАЧ.
@@ -111,14 +80,10 @@ function clearUserHistory(userId) {
 function extractLatexFromAnswer(text) {
   if (!text) return null;
   
-  // Ищем формулы в формате $$...$$
   const latexMatches = text.match(/\$\$(.*?)\$\$/gs);
   if (!latexMatches || latexMatches.length === 0) return null;
   
-  // Берем первую найденную формулу
   let latex = latexMatches[0].replace(/\$\$/g, '').trim();
-  
-  // Очищаем от лишних пробелов
   latex = latex.replace(/\s+/g, ' ').trim();
   
   return latex;
@@ -127,24 +92,15 @@ function extractLatexFromAnswer(text) {
 // ========== ГЕНЕРАЦИЯ ИЗОБРАЖЕНИЯ С ФОРМУЛОЙ ==========
 async function generateFormulaImage(latexFormula) {
   try {
-    // Для генерации изображений с LaTeX используем внешний API
-    // Можно использовать QuickLaTeX, CodeCogs или другие сервисы
-    
     const encodedFormula = encodeURIComponent(latexFormula);
+    const imageUrl = `https://latex.codecogs.com/png.latex?\\dpi{300}&space;${encodedFormula}`;
     
-    // Вариант 1: QuickLaTeX (бесплатный)
-    const imageUrl = `https://quicklatex.com/latex3.f?${encodedFormula}`;
-    
-    // Вариант 2: CodeCogs (тоже бесплатный)
-    // const imageUrl = `https://latex.codecogs.com/png.latex?\\dpi{200}${encodedFormula}`;
-    
-    // Скачиваем изображение
     const response = await axios.get(imageUrl, {
       responseType: 'arraybuffer',
       timeout: 10000
     });
     
-    return response.data; // Возвращаем Buffer с изображением
+    return response.data;
     
   } catch (error) {
     console.error('Ошибка генерации формулы:', error.message);
@@ -157,16 +113,11 @@ function processAnswer(text) {
   if (!text) return { text: '', latex: null };
   
   let cleanText = text;
-  
-  // Убираем Markdown
   cleanText = cleanText.replace(/\*\*/g, '');
   cleanText = cleanText.replace(/\*/g, '');
   cleanText = cleanText.replace(/__/g, '');
   
-  // Извлекаем LaTeX формулы
   const latex = extractLatexFromAnswer(cleanText);
-  
-  // Убираем LaTeX формулы из текстового ответа
   const textOnly = cleanText.replace(/\$\$(.*?)\$\$/gs, '').trim();
   
   return {
@@ -230,276 +181,205 @@ bot.command('clear', (ctx) => {
   ctx.reply('История очищена🧹.');
 });
 
-// ========== АДМИН КОМАНДЫ ==========
+// ========== ПРОСТАЯ АДМИН ПАНЕЛЬ ==========
 bot.command('admin', (ctx) => {
   const userId = ctx.from.id;
   
   if (!isAdmin(userId)) {
-    return ctx.reply('⚠️ У вас нет прав администратора.');
+    return ctx.reply('❌ Доступ только для администраторов');
   }
   
   ctx.reply(
-    `👑 Админ-панель\n\n` +
-    `Доступные команды:\n` +
-    `/admins - список администраторов\n` +
-    `/add_admin - добавить администратора\n` +
-    `/remove_admin [ID] - удалить администратора\n` +
-    `/generate_invite - создать код приглашения\n` +
-    `/stats - статистика бота\n` +
-    `/broadcast [сообщение] - рассылка всем пользователям\n\n` +
+    `👑 Админ панель\n\n` +
     `Ваш ID: ${userId}\n` +
-    `Всего админов: ${ADMINS.size}`
+    `Всего админов: ${ADMINS.length}\n\n` +
+    `Команды:\n` +
+    `/admins - список админов\n` +
+    `/addadmin [ID] - добавить админа\n` +
+    `/deladmin [ID] - удалить админа\n` +
+    `/stats - статистика\n` +
+    `/broadcast [текст] - рассылка`
   );
 });
 
 bot.command('admins', (ctx) => {
   if (!isAdmin(ctx.from.id)) {
-    return ctx.reply('⚠️ У вас нет прав администратора.');
+    return ctx.reply('❌ Доступ только для администраторов');
   }
   
-  const adminList = Array.from(ADMINS)
-    .map(id => `• ${id} ${id === 815509230 ? '(создатель)' : ''}`)
-    .join('\n');
+  const adminList = ADMINS.map(id => 
+    `${id} ${id === 815509230 ? '👑 (создатель)' : ''} ${id === ctx.from.id ? '(вы)' : ''}`
+  ).join('\n');
   
-  ctx.reply(`📋 Список администраторов (${ADMINS.size}):\n\n${adminList}`);
+  ctx.reply(`📋 Администраторы:\n\n${adminList}\n\nВсего: ${ADMINS.length}`);
 });
 
-bot.command('add_admin', (ctx) => {
+bot.command('addadmin', (ctx) => {
   if (!isAdmin(ctx.from.id)) {
-    return ctx.reply('⚠️ У вас нет прав администратора.');
+    return ctx.reply('❌ Доступ только для администраторов');
   }
   
-  // Генерируем временный пароль для добавления админа
-  const password = generatePassword();
-  const expires = Date.now() + 30 * 60 * 1000; // 30 минут
-  ADMIN_PASSWORDS.set(password, { expires, creator: ctx.from.id });
+  const args = ctx.message.text.split(' ');
   
-  ctx.reply(
-    `🔑 Код для добавления администратора:\n\n` +
-    `Пароль: <code>${password}</code>\n` +
-    `Действует: 30 минут\n\n` +
-    `Для добавления администратора новый пользователь должен отправить:\n` +
-    `<code>/invite ${password}</code>\n\n` +
-    `Или просто перешлите это сообщение новому администратору.`,
-    { parse_mode: 'HTML' }
-  );
+  if (args.length < 2) {
+    return ctx.reply('❌ Используйте: /addadmin [ID пользователя]\nПример: /addadmin 123456789');
+  }
+  
+  const newAdminId = parseInt(args[1]);
+  
+  if (isNaN(newAdminId)) {
+    return ctx.reply('❌ Неверный ID. ID должен быть числом');
+  }
+  
+  if (ADMINS.includes(newAdminId)) {
+    return ctx.reply('❌ Этот пользователь уже администратор');
+  }
+  
+  ADMINS.push(newAdminId);
+  ctx.reply(`✅ Пользователь ${newAdminId} добавлен в администраторы`);
+  
+  // Пытаемся уведомить нового админа
+  try {
+    ctx.telegram.sendMessage(newAdminId, 
+      `🎉 Вы были назначены администратором бота!\n` +
+      `Используйте /admin для доступа к панели управления`
+    );
+  } catch (error) {
+    console.log(`Не удалось уведомить пользователя ${newAdminId}`);
+  }
 });
 
-bot.command('invite', (ctx) => {
+bot.command('deladmin', (ctx) => {
+  if (!isAdmin(ctx.from.id)) {
+    return ctx.reply('❌ Доступ только для администраторов');
+  }
+  
   const userId = ctx.from.id;
   const args = ctx.message.text.split(' ');
   
   if (args.length < 2) {
-    return ctx.reply('Использование: /invite [код]');
+    return ctx.reply('❌ Используйте: /deladmin [ID пользователя]\nПример: /deladmin 123456789');
   }
   
-  const password = args[1];
-  const inviteData = ADMIN_PASSWORDS.get(password);
+  const adminIdToRemove = parseInt(args[1]);
   
-  if (!inviteData) {
-    return ctx.reply('❌ Неверный или просроченный код.');
+  if (isNaN(adminIdToRemove)) {
+    return ctx.reply('❌ Неверный ID');
   }
   
-  if (Date.now() > inviteData.expires) {
-    ADMIN_PASSWORDS.delete(password);
-    return ctx.reply('❌ Срок действия кода истек.');
+  if (adminIdToRemove === 815509230) {
+    return ctx.reply('❌ Нельзя удалить создателя бота');
   }
   
-  if (isAdmin(userId)) {
-    return ctx.reply('✅ Вы уже администратор.');
+  if (!ADMINS.includes(adminIdToRemove)) {
+    return ctx.reply('❌ Этот пользователь не является администратором');
   }
   
-  // Добавляем в админы
-  ADMINS.add(userId);
-  ADMIN_PASSWORDS.delete(password);
-  saveAdmins();
+  // Находим индекс и удаляем
+  const index = ADMINS.indexOf(adminIdToRemove);
+  ADMINS.splice(index, 1);
   
-  ctx.reply(
-    `✅ Вы стали администратором!\n\n` +
-    `Доступные команды:\n` +
-    `/admin - панель управления\n` +
-    `/admins - список администраторов\n` +
-    `/stats - статистика бота\n\n` +
-    `Ваш ID: ${userId}`
-  );
+  ctx.reply(`✅ Администратор ${adminIdToRemove} удален`);
   
-  // Уведомляем создателя кода
+  // Пытаемся уведомить удаленного админа
   try {
-    ctx.telegram.sendMessage(
-      inviteData.creator,
-      `✅ Пользователь @${ctx.from.username || 'без username'} (ID: ${userId}) активировал код приглашения и стал администратором.`
+    ctx.telegram.sendMessage(adminIdToRemove, 
+      `⚠️ Ваши права администратора были отозваны`
     );
-  } catch (e) {
-    console.log('Не удалось уведомить создателя кода:', e.message);
-  }
-});
-
-bot.command('remove_admin', (ctx) => {
-  if (!isAdmin(ctx.from.id)) {
-    return ctx.reply('⚠️ У вас нет прав администратора.');
-  }
-  
-  const args = ctx.message.text.split(' ');
-  
-  if (args.length < 2) {
-    return ctx.reply('Использование: /remove_admin [ID]');
-  }
-  
-  const targetId = parseInt(args[1]);
-  
-  if (isNaN(targetId)) {
-    return ctx.reply('❌ Неверный ID.');
-  }
-  
-  if (!ADMINS.has(targetId)) {
-    return ctx.reply('❌ Пользователь не является администратором.');
-  }
-  
-  if (targetId === 815509230) {
-    return ctx.reply('❌ Нельзя удалить создателя бота.');
-  }
-  
-  ADMINS.delete(targetId);
-  saveAdmins();
-  
-  ctx.reply(`✅ Администратор с ID ${targetId} удален.`);
-  
-  // Уведомляем удаленного админа
-  try {
-    ctx.telegram.sendMessage(
-      targetId,
-      `❌ Ваши права администратора были отозваны.`
-    );
-  } catch (e) {
-    console.log('Не удалось уведомить удаленного администратора:', e.message);
+  } catch (error) {
+    console.log(`Не удалось уведомить пользователя ${adminIdToRemove}`);
   }
 });
 
 bot.command('stats', (ctx) => {
   if (!isAdmin(ctx.from.id)) {
-    return ctx.reply('⚠️ У вас нет прав администратора.');
+    return ctx.reply('❌ Доступ только для администраторов');
   }
   
-  const stats = {
-    users: userHistories.size,
-    admins: ADMINS.size,
-    activeInvites: ADMIN_PASSWORDS.size,
-    memoryUsage: Math.round(process.memoryUsage().heapUsed / 1024 / 1024) + 'MB'
-  };
+  const totalUsers = userHistories.size;
+  const totalAdmins = ADMINS.length;
+  const memoryUsage = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
+  const uptime = Math.round(process.uptime() / 60);
   
   ctx.reply(
     `📊 Статистика бота:\n\n` +
-    `👥 Пользователей в памяти: ${stats.users}\n` +
-    `👑 Администраторов: ${stats.admins}\n` +
-    `🔑 Активных приглашений: ${stats.activeInvites}\n` +
-    `💾 Использование памяти: ${stats.memoryUsage}\n\n` +
-    `🕒 Время работы: ${Math.round(process.uptime() / 60)} мин.`
+    `👤 Активных пользователей: ${totalUsers}\n` +
+    `👑 Администраторов: ${totalAdmins}\n` +
+    `💾 Память: ${memoryUsage} MB\n` +
+    `⏱ Время работы: ${uptime} мин`
   );
 });
 
 bot.command('broadcast', async (ctx) => {
   if (!isAdmin(ctx.from.id)) {
-    return ctx.reply('⚠️ У вас нет прав администратора.');
+    return ctx.reply('❌ Доступ только для администраторов');
   }
   
   const message = ctx.message.text.replace('/broadcast', '').trim();
   
   if (!message) {
-    return ctx.reply('Использование: /broadcast [сообщение]');
+    return ctx.reply('❌ Введите сообщение для рассылки\nПример: /broadcast Привет всем!');
   }
   
-  const confirmMsg = await ctx.reply(
-    `📢 Подтвердите рассылку:\n\n` +
-    `${message}\n\n` +
-    `Получателей: ${userHistories.size}\n` +
-    `Отправить?`,
-    {
-      reply_markup: {
-        inline_keyboard: [
-          [
-            { text: '✅ Отправить', callback_data: 'broadcast_confirm' },
-            { text: '❌ Отмена', callback_data: 'broadcast_cancel' }
-          ]
-        ]
-      }
-    }
-  );
+  const users = Array.from(userHistories.keys());
+  const totalUsers = users.length;
   
-  // Сохраняем данные для рассылки
-  ctx.session.broadcastData = {
-    message: message,
-    users: Array.from(userHistories.keys()),
-    sent: 0,
-    failed: 0,
-    confirmMsgId: confirmMsg.message_id
-  };
-});
-
-// Обработка inline кнопок
-bot.on('callback_query', async (ctx) => {
-  const data = ctx.callbackQuery.data;
-  const userId = ctx.from.id;
-  
-  if (!isAdmin(userId)) {
-    return ctx.answerCbQuery('❌ Нет прав администратора');
+  if (totalUsers === 0) {
+    return ctx.reply('❌ Нет пользователей для рассылки');
   }
   
-  if (data === 'broadcast_confirm') {
-    await ctx.answerCbQuery('Начинаю рассылку...');
+  const progressMsg = await ctx.reply(`📤 Начинаю рассылку для ${totalUsers} пользователей...\n0/${totalUsers}`);
+  
+  let success = 0;
+  let failed = 0;
+  
+  for (let i = 0; i < users.length; i++) {
+    const userId = users[i];
     
-    const broadcastData = ctx.session.broadcastData;
-    if (!broadcastData) {
-      return ctx.editMessageText('❌ Данные рассылки не найдены');
+    // Пропускаем админов чтобы не спамить себе
+    if (ADMINS.includes(userId)) {
+      success++;
+      continue;
     }
     
-    const totalUsers = broadcastData.users.length;
+    try {
+      await ctx.telegram.sendMessage(userId, `📢 Рассылка от администратора:\n\n${message}`);
+      success++;
+    } catch (error) {
+      failed++;
+    }
     
-    for (let i = 0; i < totalUsers; i++) {
-      const user = broadcastData.users[i];
-      
+    // Обновляем прогресс каждые 10 отправок
+    if (i % 10 === 0 || i === users.length - 1) {
       try {
-        await ctx.telegram.sendMessage(user, `📢 Рассылка:\n\n${broadcastData.message}`);
-        broadcastData.sent++;
-      } catch (error) {
-        broadcastData.failed++;
+        await ctx.telegram.editMessageText(
+          ctx.chat.id,
+          progressMsg.message_id,
+          null,
+          `📤 Рассылка...\n` +
+          `✅ Отправлено: ${success}\n` +
+          `❌ Ошибок: ${failed}\n` +
+          `📊 Всего: ${totalUsers}\n` +
+          `⏳ Прогресс: ${Math.round((i + 1) / totalUsers * 100)}%`
+        );
+      } catch (e) {
+        // Игнорируем ошибки редактирования
       }
-      
-      // Обновляем статус каждые 10 отправок
-      if (i % 10 === 0 || i === totalUsers - 1) {
-        try {
-          await ctx.editMessageText(
-            `📢 Рассылка...\n\n` +
-            `Отправлено: ${broadcastData.sent}\n` +
-            `Не удалось: ${broadcastData.failed}\n` +
-            `Всего: ${totalUsers}\n` +
-            `Прогресс: ${Math.round((i + 1) / totalUsers * 100)}%`,
-            { message_id: broadcastData.confirmMsgId }
-          );
-        } catch (e) {
-          // Игнорируем ошибки редактирования
-        }
-      }
-      
-      // Задержка между сообщениями
-      await new Promise(resolve => setTimeout(resolve, 100));
     }
     
-    await ctx.editMessageText(
-      `✅ Рассылка завершена!\n\n` +
-      `📤 Успешно: ${broadcastData.sent}\n` +
-      `❌ Не удалось: ${broadcastData.failed}\n` +
-      `📊 Всего: ${totalUsers}`,
-      { message_id: broadcastData.confirmMsgId }
-    );
-    
-    // Очищаем данные рассылки
-    delete ctx.session.broadcastData;
-    
-  } else if (data === 'broadcast_cancel') {
-    await ctx.answerCbQuery('Рассылка отменена');
-    await ctx.deleteMessage();
-    delete ctx.session.broadcastData;
+    // Небольшая задержка чтобы не перегружать API
+    await new Promise(resolve => setTimeout(resolve, 50));
   }
+  
+  await ctx.telegram.editMessageText(
+    ctx.chat.id,
+    progressMsg.message_id,
+    null,
+    `✅ Рассылка завершена!\n\n` +
+    `📤 Успешно: ${success} пользователей\n` +
+    `❌ Ошибок: ${failed}\n` +
+    `📊 Всего: ${totalUsers}`
+  );
 });
 
 // ========== ТЕКСТ ==========
@@ -710,21 +590,24 @@ $$\\frac{3}{5} \\div \\frac{4}{9} = \\frac{3}{5} \\times \\frac{9}{4} = \\frac{3
 
 // ========== WEBHOOK ==========
 module.exports = async (req, res) => {
+  console.log('🚀 Вебхук вызван, метод:', req.method);
+  
   if (req.method === 'GET') {
     return res.status(200).json({
-      status: 'Telegram Math Bot with Admin Panel',
-      features: 'Текстовые ответы + изображения с формулами + админ-панель',
-      admins: ADMINS.size,
+      status: 'Telegram Math Bot',
+      features: 'Решение задач + формулы + админка',
+      admins: ADMINS.length,
       users: userHistories.size,
       timestamp: new Date().toISOString()
     });
   }
   
   try {
+    console.log('📨 Получено обновление от Telegram');
     await bot.handleUpdate(req.body);
     res.status(200).json({ ok: true });
   } catch (error) {
-    console.error('Webhook error:', error);
+    console.error('❌ Ошибка вебхука:', error.message);
     res.status(500).json({ error: error.message });
   }
 };
