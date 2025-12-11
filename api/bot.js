@@ -11,9 +11,9 @@ function isAdmin(userId) {
   return ADMINS.includes(userId);
 }
 
-// ========== УЛУЧШЕННОЕ ХРАНЕНИЕ ==========
+// ========== ХРАНЕНИЕ ==========
 const userHistories = new Map();
-const responseCache = new Map(); // Кэш ответов для частых вопросов
+const responseCache = new Map();
 
 // Умный промпт для модели
 const SYSTEM_PROMPT = `Ты — экспертный ассистент с глубокими знаниями в программировании, математике, науке и общих вопросах.
@@ -22,58 +22,64 @@ const SYSTEM_PROMPT = `Ты — экспертный ассистент с гл�
 1. ДАВАЙ ГЛУБОКИЕ, ДЕТАЛЬНЫЕ ОТВЕТЫ
 2. РЕШАЙ ЗАДАЧИ ПОШАГОВО
 3. ПРОВЕРЯЙ СВОИ ВЫЧИСЛЕНИЯ
-4. ЕСЛИ НЕ УВЕРЕН - ГОВОРИ ОБ ЭТОМ, НО ПРЕДЛАГАЙ ВАРИАНТЫ
-5. ФОРМАТИРУЙ ОТВЕТЫ ЧЕТКО:
+4. ФОРМАТИРУЙ ОТВЕТЫ ЧЕТКО:
    • Заголовки - жирным
    • Списки - с маркерами
    • Код - в отдельных блоках
    • Математика - с формулами
-   • Важные моменты - подчеркивай
 
 СТИЛЬ ОТВЕТА:
 • Будь точным и уверенным
 • Объясняй сложное простыми словами
 • Приводи примеры
-• Проверяй логику ответа
-• Не говори "я думаю" - давай факты
+• Проверяй логику ответа`;
 
-ОБЛАСТИ ЭКСПЕРТИЗЫ:
-• Программирование (Python, JavaScript, C++, алгоритмы)
-• Математика (алгебра, геометрия, анализ)
-• Наука (физика, химия, биология)
-• Технологии (AI, блокчейн, облачные вычисления)
-• Общие знания (история, философия, культура)
+// Промпт для анализа изображений
+const VISION_PROMPT = `Ты — эксперт по анализу изображений. Твоя задача — максимально подробно описать что изображено на фото.
 
-Никогда не говори "я не могу" или "у меня мало ума". Всегда пытайся решить задачу, даже если она сложная.`;
+ПРИ АНАЛИЗЕ ИЗОБРАЖЕНИЙ:
+1. Опиши ОСНОВНЫЕ ОБЪЕКТЫ (что видишь)
+2. Укажи ДЕТАЛИ (цвета, форма, размер)
+3. Определи КОНТЕКСТ (где снято, время суток)
+4. Проанализируй НАСТРОЕНИЕ/АТМОСФЕРУ
+5. Если есть текст — распознай его
+6. Если есть лица/люди — опиши (без оценки внешности)
+7. Если это скриншот/интерфейс — объясни что на нем
+8. Если это документ — попробуй распознать содержание
 
-// Получить историю с умным промптом
+ФОРМАТ ОТВЕТА:
+📸 ОПИСАНИЕ ИЗОБРАЖЕНИЯ:
+
+🏷️ Основные объекты: ...
+🎨 Детали: ...
+📍 Контекст: ...
+💭 Настроение: ...
+📝 Текст/надписи: ...
+🔍 Дополнительные наблюдения: ...
+
+Отвечай на русском языке. Будь максимально подробным.`;
+
+// Получить историю
 function getUserHistory(userId) {
   if (!userHistories.has(userId)) {
     userHistories.set(userId, [
-      { 
-        role: 'system', 
-        content: SYSTEM_PROMPT
-      }
+      { role: 'system', content: SYSTEM_PROMPT }
     ]);
   }
-  return userHistories.get(userId).slice(-12); // Храним меньше для качества
+  return userHistories.get(userId).slice(-12);
 }
 
 // Добавить в историю
 function addToHistory(userId, role, content) {
   if (!userHistories.has(userId)) {
     userHistories.set(userId, [
-      { 
-        role: 'system', 
-        content: SYSTEM_PROMPT
-      }
+      { role: 'system', content: SYSTEM_PROMPT }
     ]);
   }
   
   const history = userHistories.get(userId);
   history.push({ role, content });
   
-  // Ограничиваем для качества контекста
   if (history.length > 13) {
     const systemMsg = history[0];
     const otherMsgs = history.slice(1);
@@ -88,110 +94,119 @@ function clearUserHistory(userId) {
   responseCache.delete(userId);
 }
 
-// ========== УМНЫЕ ФУНКЦИИ ОБРАБОТКИ ==========
+// ========== ФУНКЦИИ ОБРАБОТКИ ==========
 
-// Проверка сложности вопроса
+// Анализ сложности вопроса
 function analyzeQuestionComplexity(text) {
-  const complexKeywords = [
-    'реши', 'решение', 'задача', 'уравнение', 'докажи', 'доказательство',
-    'алгоритм', 'оптимизируй', 'найди', 'вычисли', 'посчитай', 'формула',
-    'теорема', 'гипотеза', 'парадокс', 'квантовый', 'нейронная', 'блокчейн'
-  ];
-  
-  const mathSymbols = ['∫', '∑', '∞', '√', '≈', '≠', '≤', '≥', '∂', '∇'];
-  
-  let complexity = 1; // 1-простой, 2-средний, 3-сложный
+  const complexKeywords = ['реши', 'задача', 'уравнение', 'докажи', 'алгоритм', 'формула'];
+  let complexity = 1;
   
   complexKeywords.forEach(keyword => {
-    if (text.toLowerCase().includes(keyword)) complexity = Math.max(complexity, 2);
+    if (text.toLowerCase().includes(keyword)) complexity = 2;
   });
   
-  mathSymbols.forEach(symbol => {
-    if (text.includes(symbol)) complexity = 3;
-  });
-  
-  // Длинные вопросы обычно сложнее
   if (text.length > 200) complexity = Math.max(complexity, 2);
   
   return complexity;
 }
 
-// Получить настройки модели в зависимости от сложности
+// Получить настройки модели
 function getModelSettings(complexity) {
-  const settings = {
+  return {
     model: complexity === 3 ? 'mistral-medium-latest' : 'mistral-small-latest',
-    temperature: complexity === 3 ? 0.3 : 0.7, // Для сложных вопросов меньше креативности
+    temperature: complexity === 3 ? 0.3 : 0.7,
     max_tokens: complexity === 3 ? 2000 : 1500,
-    top_p: 0.9,
-    frequency_penalty: 0.1,
-    presence_penalty: 0.1
   };
-  
-  return settings;
 }
 
-// Улучшенная функция запроса к AI с повторными попытками
-async function queryMistralAI(messages, complexity, retries = 2) {
+// Запрос к Mistral для текста
+async function queryMistralAI(messages, complexity) {
   const settings = getModelSettings(complexity);
   
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    try {
-      console.log(`🔄 Попытка ${attempt + 1} для сложности ${complexity}, модель: ${settings.model}`);
-      
-      const response = await axios.post(
-        'https://api.mistral.ai/v1/chat/completions',
-        {
-          model: settings.model,
-          messages: messages,
-          max_tokens: settings.max_tokens,
-          temperature: settings.temperature,
-          top_p: settings.top_p,
-          frequency_penalty: settings.frequency_penalty,
-          presence_penalty: settings.presence_penalty,
-          stream: false
-        },
-        {
-          headers: {
-            'Authorization': `Bearer ${MISTRAL_KEY}`,
-            'Content-Type': 'application/json'
-          },
-          timeout: 45000 // 45 секунд для сложных запросов
-        }
-      );
-      
-      const answer = response.data.choices[0].message.content;
-      
-      // Проверка качества ответа
-      if (answer.length < 10 && complexity > 1) {
-        throw new Error('Слишком короткий ответ для сложного вопроса');
-      }
-      
-      return {
-        success: true,
-        answer: answer,
+  try {
+    const response = await axios.post(
+      'https://api.mistral.ai/v1/chat/completions',
+      {
         model: settings.model,
-        tokens: response.data.usage?.total_tokens || 0
+        messages: messages,
+        max_tokens: settings.max_tokens,
+        temperature: settings.temperature,
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${MISTRAL_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 35000
+      }
+    );
+    
+    return {
+      success: true,
+      answer: response.data.choices[0].message.content,
+      model: settings.model
+    };
+    
+  } catch (error) {
+    return {
+      success: false,
+      error: error.message,
+      suggestion: 'Попробуйте переформулировать вопрос.'
+    };
+  }
+}
+
+// Запрос к Mistral для анализа изображений
+async function queryMistralVision(imageUrl) {
+  try {
+    const response = await axios.post(
+      'https://api.mistral.ai/v1/chat/completions',
+      {
+        model: 'mistral-small-latest', // Модель с поддержкой Vision
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: VISION_PROMPT },
+              { type: 'image_url', image_url: { url: imageUrl } }
+            ]
+          }
+        ],
+        max_tokens: 1500,
+        temperature: 0.3
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${MISTRAL_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 60000 // 60 секунд для анализа фото
+      }
+    );
+    
+    return {
+      success: true,
+      description: response.data.choices[0].message.content,
+      model: 'mistral-vision'
+    };
+    
+  } catch (error) {
+    console.error('Vision API Error:', error.response?.data || error.message);
+    
+    // Если Vision не поддерживается, пробуем обычную модель
+    if (error.response?.data?.error?.code === 'model_not_found') {
+      return {
+        success: false,
+        error: 'Модель не поддерживает анализ изображений',
+        suggestion: 'Попробуйте другую фотографию или опишите её текстом.'
       };
-      
-    } catch (error) {
-      console.error(`❌ Попытка ${attempt + 1} failed:`, error.message);
-      
-      if (attempt === retries) {
-        return {
-          success: false,
-          error: error.message,
-          suggestion: 'Попробуйте переформулировать вопрос или разбить его на части.'
-        };
-      }
-      
-      // Меняем модель для повторной попытки
-      if (settings.model === 'mistral-medium-latest') {
-        settings.model = 'mistral-small-latest';
-      }
-      
-      // Увеличиваем время ожидания для следующей попытки
-      await new Promise(resolve => setTimeout(resolve, 2000 * (attempt + 1)));
     }
+    
+    return {
+      success: false,
+      error: 'Не удалось проанализировать изображение',
+      suggestion: 'Попробуйте другую фотографию.'
+    };
   }
 }
 
@@ -199,7 +214,7 @@ async function queryMistralAI(messages, complexity, retries = 2) {
 function formatResponse(text) {
   let formatted = text;
   
-  // Сначала обрабатываем код
+  // Обрабатываем код
   const codeBlocks = formatted.match(/```(\w+)?\n([\s\S]*?)```/g) || [];
   const codes = [];
   
@@ -213,169 +228,92 @@ function formatResponse(text) {
     }
   });
   
-  // Обрабатываем остальное форматирование
+  // Обрабатываем форматирование
   formatted = formatted
-    .replace(/\*\*(.*?)\*\*/g, '✨ $1 ✨')     // Жирный → с иконками
-    .replace(/\*(?!\*)(.*?)\*/g, '• $1')      // Курсив → маркер
-    .replace(/`([^`]+)`/g, '«$1»')           // Инлайн код → кавычки
+    .replace(/\*\*(.*?)\*\*/g, '✨ $1 ✨')
+    .replace(/\*(?!\*)(.*?)\*/g, '• $1')
+    .replace(/`([^`]+)`/g, '«$1»')
     .replace(/#{1,6}\s?(.*?)(\n|$)/g, '📌 $1\n')
-    .replace(/\[(.*?)\]\((.*?)\)/g, '$1')
     .replace(/^\s*[-*•]\s+/gm, '   • ')
-    .replace(/^\d+\.\s+/gm, match => `   ${match}`)
-    .replace(/\n{3,}/g, '\n\n')
     .trim();
   
   return { text: formatted, codes };
 }
 
-// Отправка умного ответа
-async function sendSmartResponse(ctx, aiResult) {
+// Отправка ответа
+async function sendResponse(ctx, aiResult) {
   if (!aiResult.success) {
-    return await ctx.reply(`❌ ${aiResult.error}\n\n💡 Совет: ${aiResult.suggestion}`);
+    return await ctx.reply(`❌ ${aiResult.error}\n\n💡 ${aiResult.suggestion}`);
   }
   
-  const { text: formattedText, codes } = formatResponse(aiResult.answer);
+  const { text: formattedText, codes } = formatResponse(aiResult.answer || aiResult.description);
   
   // Отправляем основной текст
   if (formattedText.trim()) {
     await ctx.reply(formattedText);
   }
   
-  // Отправляем код отдельными сообщениями
+  // Отправляем код отдельно
   for (const code of codes) {
     const codeMessage = `💻 Код (${code.language || 'текст'}):\n\`\`\`${code.language || ''}\n${code.code}\n\`\`\``;
     await ctx.reply(codeMessage, { 
-      parse_mode: 'Markdown',
-      disable_web_page_preview: true 
-    });
-  }
-  
-  // Добавляем мета-информацию для сложных ответов
-  if (codes.length > 0 || formattedText.length > 500) {
-    await ctx.reply(`\n📊 *Ответ сгенерирован моделью ${aiResult.model}*`, {
       parse_mode: 'Markdown'
     });
   }
 }
 
-// ========== КОМАНДЫ БОТА ==========
+// ========== КОМАНДЫ ==========
 
 // /start
 bot.start((ctx) => {
   const userId = ctx.from.id;
   clearUserHistory(userId);
   
-  const welcomeText = `🚀 *УМНЫЙ АССИСТЕНТ АКТИВИРОВАН*
+  const welcomeText = `👋 Привет, ${ctx.from.first_name || 'друг'}!
 
-Привет, ${ctx.from.first_name || 'эксперт'}! Я — продвинутый AI-ассистент с глубокими знаниями.
+🤖 Я умный бот с возможностями:
+• 📝 Глубокие текстовые ответы
+• 📸 Анализ изображений
+• 🧮 Решение задач
+• 💻 Помощь с кодом
 
-✨ *МОИ ВОЗМОЖНОСТИ:*
-• Решение сложных математических задач
-• Объяснение программирования с примерами кода
-• Научные расчеты и анализ
-• Логические рассуждения и доказательства
-• Глубокие ответы на философские вопросы
+📸 *ДЛЯ АНАЛИЗА ФОТО:*
+Просто отправь мне любое изображение!
 
-🧠 *ИСПОЛЬЗУЮ:*
-• Mistral Medium для сложных вопросов
-• Пошаговое решение задач
-• Проверку вычислений
-• Оптимизированные алгоритмы
-
-📝 *КАК ИСПОЛЬЗОВАТЬ:*
-1. Задай ЛЮБОЙ вопрос
-2. Получи развернутый ответ
-3. Проси уточнить если нужно
-
-*Примеры сложных вопросов:*
-"Реши дифференциальное уравнение..."
-"Напиши алгоритм для..."
-"Объясни теорию относительности..."
-"Докажи теорему Пифагора..."
-
-💡 Бот теперь в 3 раза умнее!`;
+Команды:
+/clear - очистить историю
+/help - помощь
+${isAdmin(userId) ? '/admin - админ' : ''}`;
   
   ctx.reply(welcomeText, { parse_mode: 'Markdown' });
 });
 
 // /help
 bot.help((ctx) => {
-  ctx.reply(`🤖 *ПОМОЩЬ ПО УМНОМУ БОТУ*
+  ctx.reply(`🤖 Помощь по боту
 
-🎯 *ОСОБЕННОСТИ:*
-• Автоматически определяет сложность вопроса
-• Использует продвинутые модели AI
-• Решает задачи пошагово
-• Проверяет вычисления
-• Дает глубокие объяснения
+*Возможности:*
+📝 Текстовые вопросы — любые темы
+📸 Фотографии — детальный анализ
+🧮 Математика — решение задач
+💻 Программирование — помощь с кодом
 
-🔧 *КОМАНДЫ:*
-/start - перезапуск с улучшенным AI
+*Как использовать:*
+1. Напиши вопрос — получи развернутый ответ
+2. Отправь фото — получи описание
+3. Задай уточняющий вопрос — бот помнит контекст
+
+*Команды:*
+/start - перезапустить
 /clear - очистить историю
-/mode [simple|smart|expert] - режим сложности
-/test - протестировать интеллект бота
-
-📚 *ПРИМЕРЫ ВОПРОСОВ:*
-"Реши: ∫(x² + 3x - 2)dx от 0 до 5"
-"Напиши алгоритм быстрой сортировки на Python"
-"Объясни квантовую запутанность"
-"Докажи, что √2 иррациональное число"
-
-💪 *Бот не тупит!* Он решает даже сложные задачи.`, { 
-    parse_mode: 'Markdown' 
-  });
+/help - эта справка`, { parse_mode: 'Markdown' });
 });
 
 // /clear
 bot.command('clear', (ctx) => {
   const userId = ctx.from.id;
   clearUserHistory(userId);
-  ctx.reply('🧹 *История и кэш очищены!*\n\nУмный AI готов к новым сложным задачам!', {
-    parse_mode: 'Markdown'
-  });
-});
-
-// /mode - выбор режима сложности
-bot.command('mode', (ctx) => {
-  const args = ctx.message.text.split(' ');
-  const mode = args[1] || 'smart';
-  
-  const modes = {
-    simple: '🧠 Простой режим (быстрые ответы)',
-    smart: '🚀 Умный режим (баланс скорости/качества)',
-    expert: '🎯 Экспертный режим (максимальная точность)'
-  };
-  
-  if (modes[mode]) {
-    ctx.reply(`✅ Режим изменен на: *${modes[mode]}*\n\nТеперь бот будет использовать ${mode === 'expert' ? 'самые продвинутые модели' : 'оптимизированные настройки'} для ответов.`, {
-      parse_mode: 'Markdown'
-    });
-  } else {
-    ctx.reply(`Доступные режимы:\n${Object.entries(modes).map(([key, desc]) => `• ${key}: ${desc}`).join('\n')}`);
-  }
-});
-
-// /test - тест интеллекта бота
-bot.command('test', async (ctx) => {
-  const testQuestions = [
-    "Реши: 2⁸ + 3³ × √144 - 100 ÷ 4",
-    "Напиши функцию на Python для проверки простого числа",
-    "Объясни второй закон термодинамики",
-    "Что такое NP-полная задача? Приведи пример"
-  ];
-  
-  const randomQuestion = testQuestions[Math.floor(Math.random() * testQuestions.length)];
-  
-  ctx.reply(`🧪 *ТЕСТ ИНТЕЛЛЕКТА БОТА*\n\nВопрос: *${randomQuestion}*\n\nБот думает...`, {
-    parse_mode: 'Markdown'
-  });
-  
-  // Имитируем обработку
-  setTimeout(async () => {
-    ctx.reply(`✅ *ТЕСТ ПРОЙДЕН*\n\nБот успешно обрабатывает сложные вопросы!\n\n*Факты о боте:*\n• Использует Mistral Medium для сложных задач\n• Автоматически определяет сложность\n• Проверяет вычисления\n• Дает пошаговые решения`, {
-      parse_mode: 'Markdown'
-    });
-  }, 1500);
+  ctx.reply('✅ История очищена!');
 });
 
 // ========== ОБРАБОТКА ТЕКСТА ==========
@@ -383,7 +321,6 @@ bot.on('text', async (ctx) => {
   const userId = ctx.from.id;
   const userText = ctx.message.text;
   
-  // Пропускаем команды
   if (userText.startsWith('/')) return;
   
   if (!MISTRAL_KEY) {
@@ -393,37 +330,25 @@ bot.on('text', async (ctx) => {
   // Проверяем кэш
   const cacheKey = userText.toLowerCase().trim();
   if (responseCache.has(cacheKey)) {
-    const cached = responseCache.get(cacheKey);
-    await ctx.reply(`💾 *Ответ из кэша:*\n\n${cached}`, { parse_mode: 'Markdown' });
+    await ctx.reply(`💾 Ответ из кэша:\n\n${responseCache.get(cacheKey)}`);
     return;
   }
   
-  // Анализируем сложность вопроса
-  const complexity = analyzeQuestionComplexity(userText);
-  const complexityEmoji = ['🟢', '🟡', '🔴'][complexity - 1];
-  
-  const waitMsg = await ctx.reply(`${complexityEmoji} *Анализирую вопрос...*\n\nСложность: ${complexity}/3\n\nПодбираю оптимальную модель...`, {
-    parse_mode: 'Markdown'
-  });
+  const waitMsg = await ctx.reply('💭 Думаю...');
   
   try {
-    // Добавляем вопрос в историю
     addToHistory(userId, 'user', userText);
-    
-    // Получаем историю
     const historyMessages = getUserHistory(userId);
+    const complexity = analyzeQuestionComplexity(userText);
     
-    // Запрашиваем AI
     const aiResult = await queryMistralAI(historyMessages, complexity);
     
     if (aiResult.success) {
-      // Добавляем ответ в историю
       addToHistory(userId, 'assistant', aiResult.answer);
       
-      // Кэшируем для частых вопросов
+      // Кэшируем
       if (complexity === 1) {
         responseCache.set(cacheKey, aiResult.answer);
-        // Ограничиваем размер кэша
         if (responseCache.size > 50) {
           const firstKey = responseCache.keys().next().value;
           responseCache.delete(firstKey);
@@ -431,13 +356,11 @@ bot.on('text', async (ctx) => {
       }
       
       await ctx.deleteMessage(waitMsg.message_id);
-      await sendSmartResponse(ctx, aiResult);
+      await sendResponse(ctx, aiResult);
       
     } else {
       await ctx.deleteMessage(waitMsg.message_id);
-      await ctx.reply(`❌ *Не удалось получить ответ*\n\nОшибка: ${aiResult.error}\n\n💡 *Совет:* ${aiResult.suggestion}`, {
-        parse_mode: 'Markdown'
-      });
+      await ctx.reply(`❌ ${aiResult.error}\n\n💡 ${aiResult.suggestion}`);
     }
     
   } catch (error) {
@@ -447,9 +370,66 @@ bot.on('text', async (ctx) => {
       } catch (e) {}
     }
     
-    await ctx.reply(`⚡ *Критическая ошибка*\n\n${error.message}\n\nПопробуйте переформулировать вопрос или использовать команду /clear`, {
-      parse_mode: 'Markdown'
-    });
+    await ctx.reply(`❌ Ошибка: ${error.message}`);
+  }
+});
+
+// ========== ОБРАБОТКА ФОТО ==========
+bot.on('photo', async (ctx) => {
+  const userId = ctx.from.id;
+  
+  if (!MISTRAL_KEY) {
+    return ctx.reply('❌ Mistral API ключ не настроен.');
+  }
+  
+  const waitMsg = await ctx.reply('👀 Анализирую изображение...');
+  
+  try {
+    // Получаем ссылку на фото (самое качественное)
+    const photo = ctx.message.photo[ctx.message.photo.length - 1];
+    const fileLink = await ctx.telegram.getFileLink(photo.file_id);
+    const imageUrl = fileLink.href;
+    
+    // Добавляем в историю
+    addToHistory(userId, 'user', '[Отправил изображение]');
+    
+    // Анализируем изображение
+    const visionResult = await queryMistralVision(imageUrl);
+    
+    if (visionResult.success) {
+      // Добавляем описание в историю
+      addToHistory(userId, 'assistant', `Описание фото: ${visionResult.description}`);
+      
+      await ctx.deleteMessage(waitMsg.message_id);
+      
+      // Форматируем и отправляем описание
+      let description = visionResult.description;
+      
+      // Улучшаем форматирование для фото
+      description = description
+        .replace(/📸 ОПИСАНИЕ ИЗОБРАЖЕНИЯ:/g, '📸 *ОПИСАНИЕ ИЗОБРАЖЕНИЯ:*')
+        .replace(/🏷️ Основные объекты:/g, '\n🏷️ *Основные объекты:*')
+        .replace(/🎨 Детали:/g, '\n🎨 *Детали:*')
+        .replace(/📍 Контекст:/g, '\n📍 *Контекст:*')
+        .replace(/💭 Настроение:/g, '\n💭 *Настроение:*')
+        .replace(/📝 Текст\/надписи:/g, '\n📝 *Текст/надписи:*')
+        .replace(/🔍 Дополнительные наблюдения:/g, '\n🔍 *Дополнительные наблюдения:*');
+      
+      await ctx.reply(description, { 
+        parse_mode: 'Markdown',
+        disable_web_page_preview: true 
+      });
+      
+    } else {
+      await ctx.deleteMessage(waitMsg.message_id);
+      await ctx.reply(`❌ ${visionResult.error}\n\n💡 ${visionResult.suggestion}`);
+    }
+    
+  } catch (error) {
+    await ctx.deleteMessage(waitMsg.message_id);
+    console.error('Photo processing error:', error);
+    
+    await ctx.reply('❌ Не удалось обработать изображение. Попробуйте другую фотографию.');
   }
 });
 
@@ -457,12 +437,9 @@ bot.on('text', async (ctx) => {
 module.exports = async (req, res) => {
   if (req.method === 'GET') {
     return res.status(200).json({
-      status: '🚀 SMART Telegram Bot is running',
-      version: '3.0 - Intelligent Edition',
+      status: '✅ Telegram Bot with Vision is running',
+      features: ['text_ai', 'image_analysis', 'memory', 'caching'],
       users: userHistories.size,
-      cache_size: responseCache.size,
-      models: ['mistral-small-latest', 'mistral-medium-latest'],
-      features: ['smart_analysis', 'retry_logic', 'response_cache', 'complexity_detection'],
       timestamp: new Date().toISOString()
     });
   }
