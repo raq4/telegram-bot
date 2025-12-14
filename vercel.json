@@ -1,12 +1,7 @@
 {
-  "version": 2,
   "functions": {
     "api/bot.js": {
-      "memory": 1024,
-      "maxDuration": 15
+      "runtime": "nodejs18.x"
     }
-  },
-  "routes": [
-    { "src": "/api/bot", "dest": "/api/bot.js" }
-  ]
+  }
 }
