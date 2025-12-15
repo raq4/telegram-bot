@@ -1,7 +1,14 @@
 {
   "functions": {
     "api/bot.js": {
-      "runtime": "nodejs18.x"
+      "maxDuration": 60,
+      "memory": 1024
     }
-  }
+  },
+  "rewrites": [
+    {
+      "source": "/api/bot",
+      "destination": "/api/bot.js"
+    }
+  ]
 }
