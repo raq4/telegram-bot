@@ -1,4 +1,4 @@
-// api/bot.js — Telegram Bot (Vercel + Mistral) с памятью и молниеносными ответами
+// api/bot.js — Telegram Bot (Vercel + Mistral) с памятью и быстрыми ответами
 // ENV: TELEGRAM_TOKEN, MISTRAL_API_KEY, WEBHOOK_URL, UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN
 
 import { Telegraf } from "telegraf";
@@ -20,9 +20,9 @@ const redis = new Redis({
 });
 
 // ---------- Локальный кэш истории ----------
-const localCache = new Map(); // chatId → история
-const MAX_HISTORY = 99;        // Максимальная память
-const CONTEXT_HISTORY = 20;    // Сколько последних сообщений отправлять модели
+const localCache = new Map();
+const MAX_HISTORY = 99;
+const CONTEXT_HISTORY = 20;
 
 async function getChatHistory(chatId) {
   if (localCache.has(chatId)) return localCache.get(chatId);
@@ -90,7 +90,6 @@ async function askMistralText(text, chatId) {
   }
 
   history.push({ role: "user", content: text });
-
   const context = history.slice(-CONTEXT_HISTORY*2);
 
   try {
@@ -111,7 +110,6 @@ async function askMistralText(text, chatId) {
     );
 
     const answer = response.data.choices[0].message.content;
-    // Асинхронное сохранение истории
     addToHistory(chatId, "assistant", answer);
     return answer;
   } catch (err) {
@@ -180,13 +178,14 @@ bot.start((ctx) => {
 
 // ---------- Команда очистки истории ----------
 bot.command("clear", async (ctx) => {
+  const chatId = ctx.chat.id;
+  localCache.delete(chatId);
   try {
-    const chatId = ctx.chat.id;
-    const success = await clearChatHistory(chatId);
-    await ctx.reply(success ? "✅ История очищена." : "⚠️ Не удалось очистить историю.");
+    await redis.del(`chat:${chatId}`);
+    await ctx.reply("✅ История очищена.");
   } catch (err) {
-    console.error("Clear command error:", err);
-    await ctx.reply("❌ Ошибка очистки истории.");
+    console.error("Redis clear error:", err);
+    await ctx.reply("⚠️ Не удалось очистить историю.");
   }
 });
 
@@ -195,13 +194,11 @@ bot.command("history", async (ctx) => {
   try {
     const chatId = ctx.chat.id;
     const history = await getChatHistory(chatId);
-
     if (!Array.isArray(history)) {
       localCache.delete(chatId);
       await ctx.reply("⚠️ История повреждена, сброшена.");
       return;
     }
-
     await ctx.reply(
       `📊 Сообщений в памяти: ${history.length}\n` +
       `Примерно диалогов: ${Math.floor(history.length / 2)}`
@@ -215,7 +212,6 @@ bot.command("history", async (ctx) => {
 // ---------- Обработка текста ----------
 bot.on("text", async (ctx) => {
   if (ctx.message.text.startsWith("/")) return;
-
   const chatId = ctx.chat.id;
   const waitMsg = await ctx.reply("⏳ Думаю...");
 
@@ -231,7 +227,7 @@ bot.on("text", async (ctx) => {
       await ctx.reply(answer);
     }
 
-    // Асинхронное добавление в историю
+    // Асинхронное добавление пользователя
     addToHistory(chatId, "user", ctx.message.text);
 
   } catch (err) {
