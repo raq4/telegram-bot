@@ -15,6 +15,7 @@ const bot = new Telegraf(process.env.TELEGRAM_TOKEN);
 const MAX_HISTORY = 20;       // память до 20 сообщений
 const CONTEXT_HISTORY = 5;    // последние 5 сообщений для контекста
 const localCache = new Map();
+const REQUEST_TIMEOUT = 10000; // 10 секунд таймаут для Mistral
 
 // ---------- История ----------
 async function getHistory(chatId) {
@@ -30,7 +31,7 @@ async function getHistory(chatId) {
 }
 
 function saveHistory(chatId, history) {
-  const trimmed = history.slice(-MAX_HISTORY*2);
+  const trimmed = history.slice(-MAX_HISTORY * 2);
   localCache.set(chatId, trimmed);
   redis.set(`chat:${chatId}`, trimmed).catch(console.error);
   redis.expire(`chat:${chatId}`, 86400).catch(console.error);
@@ -46,7 +47,7 @@ async function addMessage(chatId, role, content, imageUrl = null) {
   return history;
 }
 
-// ---------- Mistral (скоростная модель) ----------
+// ---------- Mistral с таймаутом ----------
 async function askMistral(chatId, userMessage, imageUrl = null) {
   const history = await getHistory(chatId);
   if (history.length === 0) {
@@ -58,23 +59,32 @@ async function askMistral(chatId, userMessage, imageUrl = null) {
     : { role: "user", content: userMessage };
   history.push(userMsg);
 
-  const context = history.slice(-CONTEXT_HISTORY*2);
-  // Легкая модель для суперскорости
-  const model = imageUrl ? "pixtral-lite" : "mistral-mini";
+  const context = history.slice(-CONTEXT_HISTORY * 2);
+  const model = imageUrl ? "pixtral-12b" : "mistral-large-latest";
 
   try {
+    const source = axios.CancelToken.source();
+    const timer = setTimeout(() => source.cancel(), REQUEST_TIMEOUT);
+
     const r = await axios.post(
       "https://api.mistral.ai/v1/chat/completions",
-      { model, messages: context, max_tokens: 2048 },
-      { headers: { Authorization: `Bearer ${process.env.MISTRAL_API_KEY}`, "Content-Type": "application/json" } }
+      { model, messages: context, max_tokens: 4096 },
+      { headers: { Authorization: `Bearer ${process.env.MISTRAL_API_KEY}`, "Content-Type": "application/json" }, cancelToken: source.token }
     );
 
+    clearTimeout(timer);
     const answer = r.data.choices[0].message.content;
     addMessage(chatId, "assistant", answer); // Асинхронно
     return answer;
+
   } catch (err) {
-    console.error(err);
-    return "❌ Ошибка генерации. Попробуйте позже.";
+    if (axios.isCancel(err)) {
+      console.error("Mistral timeout");
+      return "⏳ Ответ задерживается, попробуйте через несколько секунд.";
+    } else {
+      console.error(err);
+      return "❌ Ошибка генерации. Попробуйте позже.";
+    }
   }
 }
 
@@ -104,10 +114,9 @@ bot.on("text", async (ctx) => {
   const chatId = ctx.chat.id;
   if (ctx.message.text.startsWith("/")) return;
 
-  // Сразу отправляем сообщение “⏳ Думаю...”
   const waitMsg = await ctx.reply("⏳ Думаю...");
 
-  // Асинхронно получаем ответ
+  // Асинхронно получаем ответ, с таймаутом 10 секунд
   askMistral(chatId, ctx.message.text).then(async (answer) => {
     try {
       await ctx.telegram.editMessageText(chatId, waitMsg.message_id, undefined, answer);
