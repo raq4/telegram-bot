@@ -1,4 +1,4 @@
-// api/bot.js — Telegram Bot (Vercel + Mistral) с памятью
+// api/bot.js — Telegram Bot (Vercel + Mistral) с памятью и защитой от ошибок
 // ENV: TELEGRAM_TOKEN, MISTRAL_API_KEY, WEBHOOK_URL, UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN
 
 import { Telegraf } from "telegraf";
@@ -19,25 +19,33 @@ const redis = new Redis({
   token: process.env.UPSTASH_REDIS_REST_TOKEN,
 });
 
-// ---------- Локальный кэш истории для скорости ----------
+// ---------- Локальный кэш истории ----------
 const localCache = new Map(); // chatId → история
 const MAX_HISTORY = 99;        // Максимальная память
 const CONTEXT_HISTORY = 20;    // Сколько последних сообщений отправлять модели
 
 async function getChatHistory(chatId) {
   if (localCache.has(chatId)) return localCache.get(chatId);
-  const history = (await redis.get(`chat:${chatId}`)) || [];
-  localCache.set(chatId, history);
-  return history;
+  try {
+    const history = (await redis.get(`chat:${chatId}`)) || [];
+    if (!Array.isArray(history)) return [];
+    localCache.set(chatId, history);
+    return history;
+  } catch (err) {
+    console.error("Redis get error:", err);
+    return [];
+  }
 }
 
 function saveChatHistory(chatId, history) {
-  // Локальный кэш
-  localCache.set(chatId, history);
-  // Асинхронно сохраняем в Redis
-  const trimmed = history.slice(-MAX_HISTORY*2);
-  redis.set(`chat:${chatId}`, trimmed).catch(console.error);
-  redis.expire(`chat:${chatId}`, 86400).catch(console.error);
+  try {
+    localCache.set(chatId, history);
+    const trimmed = history.slice(-MAX_HISTORY*2);
+    redis.set(`chat:${chatId}`, trimmed).catch(console.error);
+    redis.expire(`chat:${chatId}`, 86400).catch(console.error);
+  } catch (err) {
+    console.error("Redis save error:", err);
+  }
 }
 
 async function clearChatHistory(chatId) {
@@ -83,31 +91,33 @@ async function askMistralText(text, chatId) {
 
   history.push({ role: "user", content: text });
 
-  // Отправляем только последние CONTEXT_HISTORY сообщений модели
   const context = history.slice(-CONTEXT_HISTORY*2);
 
-  const response = await axios.post(
-    "https://api.mistral.ai/v1/chat/completions",
-    {
-      model: "mistral-large-latest",
-      messages: context,
-      max_tokens: 4096,
-      temperature: 0.7
-    },
-    {
-      headers: {
-        Authorization: `Bearer ${process.env.MISTRAL_API_KEY}`,
-        "Content-Type": "application/json"
+  try {
+    const response = await axios.post(
+      "https://api.mistral.ai/v1/chat/completions",
+      {
+        model: "mistral-large-latest",
+        messages: context,
+        max_tokens: 4096,
+        temperature: 0.7
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.MISTRAL_API_KEY}`,
+          "Content-Type": "application/json"
+        }
       }
-    }
-  );
+    );
 
-  const answer = response.data.choices[0].message.content;
-
-  history.push({ role: "assistant", content: answer });
-  saveChatHistory(chatId, history);
-
-  return answer;
+    const answer = response.data.choices[0].message.content;
+    history.push({ role: "assistant", content: answer });
+    saveChatHistory(chatId, history);
+    return answer;
+  } catch (err) {
+    console.error("Mistral Text error:", err);
+    return "❌ Ошибка генерации ответа. Попробуйте позже.";
+  }
 }
 
 // ---------- Mistral Vision ----------
@@ -130,29 +140,32 @@ async function askMistralVision(imageUrl, chatId, userText = "Реши зада�
   };
 
   history.push(visionMessage);
-
   const context = history.slice(-CONTEXT_HISTORY*2);
 
-  const response = await axios.post(
-    "https://api.mistral.ai/v1/chat/completions",
-    {
-      model: "pixtral-12b",
-      messages: context,
-      max_tokens: 4096
-    },
-    {
-      headers: {
-        Authorization: `Bearer ${process.env.MISTRAL_API_KEY}`,
-        "Content-Type": "application/json"
+  try {
+    const response = await axios.post(
+      "https://api.mistral.ai/v1/chat/completions",
+      {
+        model: "pixtral-12b",
+        messages: context,
+        max_tokens: 4096
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.MISTRAL_API_KEY}`,
+          "Content-Type": "application/json"
+        }
       }
-    }
-  );
+    );
 
-  const answer = response.data.choices[0].message.content;
-  history.push({ role: "assistant", content: answer });
-  saveChatHistory(chatId, history);
-
-  return answer;
+    const answer = response.data.choices[0].message.content;
+    history.push({ role: "assistant", content: answer });
+    saveChatHistory(chatId, history);
+    return answer;
+  } catch (err) {
+    console.error("Mistral Vision error:", err);
+    return "❌ Ошибка обработки изображения. Попробуйте другое фото.";
+  }
 }
 
 // ---------- Telegram Bot ----------
@@ -166,16 +179,38 @@ bot.start((ctx) => {
   );
 });
 
+// ---------- Команда очистки истории ----------
 bot.command("clear", async (ctx) => {
-  const chatId = ctx.chat.id;
-  const success = await clearChatHistory(chatId);
-  await ctx.reply(success ? "✅ История очищена." : "⚠️ Не удалось очистить историю.");
+  try {
+    const chatId = ctx.chat.id;
+    const success = await clearChatHistory(chatId);
+    await ctx.reply(success ? "✅ История очищена." : "⚠️ Не удалось очистить историю.");
+  } catch (err) {
+    console.error("Clear command error:", err);
+    await ctx.reply("❌ Ошибка очистки истории.");
+  }
 });
 
+// ---------- Команда истории ----------
 bot.command("history", async (ctx) => {
-  const chatId = ctx.chat.id;
-  const history = await getChatHistory(chatId);
-  await ctx.reply(`📊 Сообщений в памяти: ${history.length}\nПримерно диалогов: ${Math.floor(history.length/2)}`);
+  try {
+    const chatId = ctx.chat.id;
+    const history = await getChatHistory(chatId);
+
+    if (!Array.isArray(history)) {
+      localCache.delete(chatId);
+      await ctx.reply("⚠️ История повреждена, сброшена.");
+      return;
+    }
+
+    await ctx.reply(
+      `📊 Сообщений в памяти: ${history.length}\n` +
+      `Примерно диалогов: ${Math.floor(history.length / 2)}`
+    );
+  } catch (err) {
+    console.error("History command error:", err);
+    await ctx.reply("❌ Не удалось получить историю. Попробуйте позже.");
+  }
 });
 
 // ---------- Обработка текста ----------
@@ -197,7 +232,7 @@ bot.on("text", async (ctx) => {
       await ctx.reply(answer);
     }
   } catch (err) {
-    console.error("Text error:", err);
+    console.error("Text handler error:", err);
     await ctx.deleteMessage(waitMsg.message_id);
     await ctx.reply("❌ Ошибка обработки текста.");
   }
@@ -225,7 +260,7 @@ bot.on("photo", async (ctx) => {
       await ctx.reply(answer);
     }
   } catch (err) {
-    console.error("Photo error:", err);
+    console.error("Photo handler error:", err);
     await ctx.deleteMessage(waitMsg.message_id);
     await ctx.reply("❌ Ошибка обработки изображения.");
   }
@@ -234,10 +269,20 @@ bot.on("photo", async (ctx) => {
 // ---------- Vercel Handler ----------
 export default async function handler(req, res) {
   if (req.method === "POST") {
-    await bot.handleUpdate(req.body);
-    res.status(200).send("OK");
+    try {
+      await bot.handleUpdate(req.body);
+      res.status(200).send("OK");
+    } catch (err) {
+      console.error("Unhandled bot error:", err);
+      res.status(500).send("Bot error");
+    }
   } else {
-    await bot.telegram.setWebhook(process.env.WEBHOOK_URL);
-    res.status(200).send("Webhook set");
+    try {
+      await bot.telegram.setWebhook(process.env.WEBHOOK_URL);
+      res.status(200).send("Webhook set");
+    } catch (err) {
+      console.error("Webhook error:", err);
+      res.status(500).send("Webhook error");
+    }
   }
 }
