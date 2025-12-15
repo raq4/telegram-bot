@@ -1,8 +1,7 @@
 {
   "dependencies": {
-    "telegraf": "^4.15.0",
-    "axios": "^1.5.0",
-    "@upstash/redis": "^1.31.0"
-  },
-  "type": "module"
+    "telegraf": "^4.16.0",
+    "axios": "^1.6.0",
+    "@upstash/redis": "^1.24.0"
+  }
 }
