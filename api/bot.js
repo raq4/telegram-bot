@@ -2,17 +2,21 @@ import { Telegraf } from "telegraf";
 import axios from "axios";
 import { Redis } from "@upstash/redis";
 
+// ---------- Redis ----------
 const redis = new Redis({
   url: process.env.UPSTASH_REDIS_REST_URL,
   token: process.env.UPSTASH_REDIS_REST_TOKEN,
 });
 
+// ---------- Telegram Bot ----------
 const bot = new Telegraf(process.env.TELEGRAM_TOKEN);
 
-const MAX_HISTORY = 99;
-const CONTEXT_HISTORY = 20;
+// ---------- Конфиги ----------
+const MAX_HISTORY = 20; // память до 20 сообщений
+const CONTEXT_HISTORY = 10; // последние N сообщений для контекста
 const localCache = new Map();
 
+// ---------- История ----------
 async function getHistory(chatId) {
   if (localCache.has(chatId)) return localCache.get(chatId);
   try {
@@ -34,37 +38,38 @@ function saveHistory(chatId, history) {
 
 async function addMessage(chatId, role, content, imageUrl = null) {
   const history = await getHistory(chatId);
-  const msg = imageUrl ? { role, content: [{ type: "text", text: content }, { type: "image_url", image_url: imageUrl }] } : { role, content };
+  const msg = imageUrl
+    ? { role, content: [{ type: "text", text: content }, { type: "image_url", image_url: imageUrl }] }
+    : { role, content };
   history.push(msg);
   saveHistory(chatId, history);
   return history;
 }
 
-// Универсальная функция для Mistral (текст/изображение)
+// ---------- Mistral ----------
 async function askMistral(chatId, userMessage, imageUrl = null) {
   const history = await getHistory(chatId);
   if (history.length === 0) {
     history.push({ role: "system", content: imageUrl ? "Ты ассистент с поддержкой изображений." : "Ты полезный ассистент. Отвечай подробно на русском." });
   }
 
-  const userMsg = imageUrl ? { role: "user", content: [{ type: "text", text: userMessage }, { type: "image_url", image_url: imageUrl }] } : { role: "user", content: userMessage };
+  const userMsg = imageUrl
+    ? { role: "user", content: [{ type: "text", text: userMessage }, { type: "image_url", image_url: imageUrl }] }
+    : { role: "user", content: userMessage };
   history.push(userMsg);
 
   const context = history.slice(-CONTEXT_HISTORY*2);
-
   const model = imageUrl ? "pixtral-12b" : "mistral-large-latest";
 
   try {
-    const r = await axios.post("https://api.mistral.ai/v1/chat/completions", {
-      model,
-      messages: context,
-      max_tokens: 4096,
-    }, {
-      headers: { Authorization: `Bearer ${process.env.MISTRAL_API_KEY}`, "Content-Type": "application/json" }
-    });
+    const r = await axios.post(
+      "https://api.mistral.ai/v1/chat/completions",
+      { model, messages: context, max_tokens: 4096 },
+      { headers: { Authorization: `Bearer ${process.env.MISTRAL_API_KEY}`, "Content-Type": "application/json" } }
+    );
 
     const answer = r.data.choices[0].message.content;
-    addMessage(chatId, "assistant", answer); // Асинхронно сохраняем
+    addMessage(chatId, "assistant", answer); // Асинхронно
     return answer;
   } catch (err) {
     console.error(err);
@@ -93,26 +98,38 @@ bot.command("history", async (ctx) => {
   ctx.reply(`📊 Сообщений в памяти: ${history.length}\nПримерно диалогов: ${Math.floor(history.length / 2)}`);
 });
 
-// ---------- Обработка текста ----------
+// ---------- Обработка текста с мгновенной визуальной отдачей ----------
 bot.on("text", async (ctx) => {
   const chatId = ctx.chat.id;
   if (ctx.message.text.startsWith("/")) return;
 
+  // Сразу отправляем сообщение “⏳ Думаю...”
   const waitMsg = await ctx.reply("⏳ Думаю...");
 
-  const answer = await askMistral(chatId, ctx.message.text);
+  // Асинхронно получаем ответ
+  askMistral(chatId, ctx.message.text).then(async (answer) => {
+    try {
+      if (answer.length > 4000) {
+        // Разбиваем на куски
+        const chunks = answer.match(/[\s\S]{1,4000}/g);
+        await ctx.deleteMessage(waitMsg.message_id);
+        for (const chunk of chunks) await ctx.reply(chunk);
+      } else {
+        // Редактируем сообщение вместо удаления/отправки нового
+        await ctx.telegram.editMessageText(chatId, waitMsg.message_id, undefined, answer);
+      }
+    } catch (err) {
+      console.error("Edit message error:", err);
+      await ctx.deleteMessage(waitMsg.message_id);
+      await ctx.reply(answer);
+    }
+  });
 
-  await ctx.deleteMessage(waitMsg.message_id);
-  if (answer.length > 4000) {
-    for (const chunk of answer.match(/[\s\S]{1,4000}/g)) await ctx.reply(chunk);
-  } else {
-    await ctx.reply(answer);
-  }
-
-  addMessage(chatId, "user", ctx.message.text); // Асинхронно
+  // Асинхронное добавление пользователя в историю
+  addMessage(chatId, "user", ctx.message.text);
 });
 
-// ---------- Обработка фото ----------
+// ---------- Обработка фото с мгновенной визуальной отдачей ----------
 bot.on("photo", async (ctx) => {
   const chatId = ctx.chat.id;
   const waitMsg = await ctx.reply("🔍 Анализирую изображение...");
@@ -122,16 +139,23 @@ bot.on("photo", async (ctx) => {
     const imageUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_TOKEN}/${file.file_path}`;
     const caption = ctx.message.caption || "Что на фото?";
 
-    const answer = await askMistral(chatId, caption, imageUrl);
-    await ctx.deleteMessage(waitMsg.message_id);
+    askMistral(chatId, caption, imageUrl).then(async (answer) => {
+      try {
+        if (answer.length > 4000) {
+          const chunks = answer.match(/[\s\S]{1,4000}/g);
+          await ctx.deleteMessage(waitMsg.message_id);
+          for (const chunk of chunks) await ctx.reply(chunk);
+        } else {
+          await ctx.telegram.editMessageText(chatId, waitMsg.message_id, undefined, answer);
+        }
+      } catch (err) {
+        console.error("Edit photo message error:", err);
+        await ctx.deleteMessage(waitMsg.message_id);
+        await ctx.reply(answer);
+      }
+    });
 
-    if (answer.length > 4000) {
-      for (const chunk of answer.match(/[\s\S]{1,4000}/g)) await ctx.reply(chunk);
-    } else {
-      await ctx.reply(answer);
-    }
-
-    addMessage(chatId, "user", caption, imageUrl); // Асинхронно
+    addMessage(chatId, "user", caption, imageUrl);
   } catch (err) {
     console.error(err);
     await ctx.deleteMessage(waitMsg.message_id);
