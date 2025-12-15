@@ -5,37 +5,41 @@ import { Telegraf } from "telegraf";
 import axios from "axios";
 import { Redis } from "@upstash/redis";
 
-// Инициализация Redis
+// ---------- Инициализация Redis ----------
 const redis = new Redis({
   url: process.env.REDIS_URL,
   token: process.env.REDIS_TOKEN,
 });
 
-// Telegram Bot
-const bot = new Telegraf(process.env.TELEGRAM_TOKEN);
-
-// ---------- ПАМЯТЬ ЧАТА ----------
-const MAX_HISTORY = 99;
+// ---------- Локальный кэш истории для скорости ----------
+const localCache = new Map(); // chatId → история
+const MAX_HISTORY = 99;        // Максимальная память
+const CONTEXT_HISTORY = 20;    // Сколько последних сообщений отправлять модели
 
 async function getChatHistory(chatId) {
-  try {
-    const history = await redis.get(`chat:${chatId}`);
-    return Array.isArray(history) ? history : [];
-  } catch (err) {
-    console.error("Redis get error:", err);
-    return [];
-  }
+  if (localCache.has(chatId)) return localCache.get(chatId);
+  const history = (await redis.get(`chat:${chatId}`)) || [];
+  localCache.set(chatId, history);
+  return history;
 }
 
-async function saveChatHistory(chatId, history) {
+function saveChatHistory(chatId, history) {
+  // Локальный кэш
+  localCache.set(chatId, history);
+  // Асинхронно сохраняем в Redis, не задерживая ответ
+  const trimmed = history.slice(-MAX_HISTORY*2);
+  redis.set(`chat:${chatId}`, trimmed).catch(console.error);
+  redis.expire(`chat:${chatId}`, 86400).catch(console.error);
+}
+
+async function clearChatHistory(chatId) {
+  localCache.delete(chatId);
   try {
-    // Обрезаем до MAX_HISTORY сообщений (user+assistant = пара)
-    const trimmed = history.slice(-MAX_HISTORY * 2);
-    // Сохраняем в Redis с TTL 24 часа
-    await redis.set(`chat:${chatId}`, trimmed);
-    await redis.expire(`chat:${chatId}`, 86400);
+    await redis.del(`chat:${chatId}`);
+    return true;
   } catch (err) {
-    console.error("Redis set error:", err);
+    console.error("Redis del error:", err);
+    return false;
   }
 }
 
@@ -54,18 +58,8 @@ async function addToHistory(chatId, role, content, imageUrl = null) {
     message = { role, content };
   }
   history.push(message);
-  await saveChatHistory(chatId, history);
+  saveChatHistory(chatId, history);
   return history;
-}
-
-async function clearChatHistory(chatId) {
-  try {
-    await redis.del(`chat:${chatId}`);
-    return true;
-  } catch (err) {
-    console.error("Redis del error:", err);
-    return false;
-  }
 }
 
 // ---------- Mistral Text ----------
@@ -81,11 +75,14 @@ async function askMistralText(text, chatId) {
 
   history.push({ role: "user", content: text });
 
+  // Отправляем только последние CONTEXT_HISTORY сообщений модели
+  const context = history.slice(-CONTEXT_HISTORY*2);
+
   const response = await axios.post(
     "https://api.mistral.ai/v1/chat/completions",
     {
       model: "mistral-large-latest",
-      messages: history,
+      messages: context,
       max_tokens: 4096,
       temperature: 0.7
     },
@@ -99,9 +96,8 @@ async function askMistralText(text, chatId) {
 
   const answer = response.data.choices[0].message.content;
 
-  // Сохраняем ответ ассистента
   history.push({ role: "assistant", content: answer });
-  await saveChatHistory(chatId, history);
+  saveChatHistory(chatId, history);
 
   return answer;
 }
@@ -127,11 +123,13 @@ async function askMistralVision(imageUrl, chatId, userText = "Реши зада�
 
   history.push(visionMessage);
 
+  const context = history.slice(-CONTEXT_HISTORY*2);
+
   const response = await axios.post(
     "https://api.mistral.ai/v1/chat/completions",
     {
       model: "pixtral-12b",
-      messages: history,
+      messages: context,
       max_tokens: 4096
     },
     {
@@ -144,12 +142,14 @@ async function askMistralVision(imageUrl, chatId, userText = "Реши зада�
 
   const answer = response.data.choices[0].message.content;
   history.push({ role: "assistant", content: answer });
-  await saveChatHistory(chatId, history);
+  saveChatHistory(chatId, history);
 
   return answer;
 }
 
-// ---------- КОМАНДЫ БОТА ----------
+// ---------- Telegram Bot ----------
+const bot = new Telegraf(process.env.TELEGRAM_TOKEN);
+
 bot.start((ctx) => {
   ctx.reply(
     "🤖 Бот запущен с памятью!\n" +
@@ -170,9 +170,10 @@ bot.command("history", async (ctx) => {
   await ctx.reply(`📊 Сообщений в памяти: ${history.length}\nПримерно диалогов: ${Math.floor(history.length/2)}`);
 });
 
-// Обработка текста
+// ---------- Обработка текста ----------
 bot.on("text", async (ctx) => {
   if (ctx.message.text.startsWith("/")) return;
+
   const chatId = ctx.chat.id;
   const waitMsg = await ctx.reply("⏳ Думаю...");
 
@@ -180,7 +181,6 @@ bot.on("text", async (ctx) => {
     const answer = await askMistralText(ctx.message.text, chatId);
     await ctx.deleteMessage(waitMsg.message_id);
 
-    // Разбиваем длинные сообщения
     if (answer.length > 4000) {
       for (const chunk of answer.match(/[\s\S]{1,4000}/g)) {
         await ctx.reply(chunk);
@@ -195,7 +195,7 @@ bot.on("text", async (ctx) => {
   }
 });
 
-// Обработка фото
+// ---------- Обработка фото ----------
 bot.on("photo", async (ctx) => {
   const chatId = ctx.chat.id;
   const waitMsg = await ctx.reply("🔍 Анализирую изображение...");
