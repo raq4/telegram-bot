@@ -1,4 +1,4 @@
-// api/bot.js — Telegram Bot (Vercel + Mistral) с памятью и защитой от ошибок
+// api/bot.js — Telegram Bot (Vercel + Mistral) с памятью и молниеносными ответами
 // ENV: TELEGRAM_TOKEN, MISTRAL_API_KEY, WEBHOOK_URL, UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN
 
 import { Telegraf } from "telegraf";
@@ -111,8 +111,8 @@ async function askMistralText(text, chatId) {
     );
 
     const answer = response.data.choices[0].message.content;
-    history.push({ role: "assistant", content: answer });
-    saveChatHistory(chatId, history);
+    // Асинхронное сохранение истории
+    addToHistory(chatId, "assistant", answer);
     return answer;
   } catch (err) {
     console.error("Mistral Text error:", err);
@@ -159,8 +159,7 @@ async function askMistralVision(imageUrl, chatId, userText = "Реши зада�
     );
 
     const answer = response.data.choices[0].message.content;
-    history.push({ role: "assistant", content: answer });
-    saveChatHistory(chatId, history);
+    addToHistory(chatId, "assistant", answer);
     return answer;
   } catch (err) {
     console.error("Mistral Vision error:", err);
@@ -231,6 +230,10 @@ bot.on("text", async (ctx) => {
     } else {
       await ctx.reply(answer);
     }
+
+    // Асинхронное добавление в историю
+    addToHistory(chatId, "user", ctx.message.text);
+
   } catch (err) {
     console.error("Text handler error:", err);
     await ctx.deleteMessage(waitMsg.message_id);
@@ -259,6 +262,9 @@ bot.on("photo", async (ctx) => {
     } else {
       await ctx.reply(answer);
     }
+
+    addToHistory(chatId, "user", caption, imageUrl);
+
   } catch (err) {
     console.error("Photo handler error:", err);
     await ctx.deleteMessage(waitMsg.message_id);
