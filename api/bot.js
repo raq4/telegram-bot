@@ -1,14 +1,22 @@
 // api/bot.js — Telegram Bot (Vercel + Mistral) с памятью
-// ENV: TELEGRAM_TOKEN, MISTRAL_API_KEY, WEBHOOK_URL, REDIS_URL, REDIS_TOKEN
+// ENV: TELEGRAM_TOKEN, MISTRAL_API_KEY, WEBHOOK_URL, UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN
 
 import { Telegraf } from "telegraf";
 import axios from "axios";
 import { Redis } from "@upstash/redis";
 
+// ---------- Проверка ENV ----------
+if (!process.env.UPSTASH_REDIS_REST_URL || !process.env.UPSTASH_REDIS_REST_TOKEN) {
+  console.error("⚠️ REDIS URL или TOKEN не заданы!");
+}
+if (!process.env.TELEGRAM_TOKEN) console.error("⚠️ TELEGRAM_TOKEN не задан!");
+if (!process.env.MISTRAL_API_KEY) console.error("⚠️ MISTRAL_API_KEY не задан!");
+if (!process.env.WEBHOOK_URL) console.error("⚠️ WEBHOOK_URL не задан!");
+
 // ---------- Инициализация Redis ----------
 const redis = new Redis({
-  url: process.env.REDIS_URL,
-  token: process.env.REDIS_TOKEN,
+  url: process.env.UPSTASH_REDIS_REST_URL,
+  token: process.env.UPSTASH_REDIS_REST_TOKEN,
 });
 
 // ---------- Локальный кэш истории для скорости ----------
@@ -26,7 +34,7 @@ async function getChatHistory(chatId) {
 function saveChatHistory(chatId, history) {
   // Локальный кэш
   localCache.set(chatId, history);
-  // Асинхронно сохраняем в Redis, не задерживая ответ
+  // Асинхронно сохраняем в Redis
   const trimmed = history.slice(-MAX_HISTORY*2);
   redis.set(`chat:${chatId}`, trimmed).catch(console.error);
   redis.expire(`chat:${chatId}`, 86400).catch(console.error);
