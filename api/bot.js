@@ -12,8 +12,8 @@ const redis = new Redis({
 const bot = new Telegraf(process.env.TELEGRAM_TOKEN);
 
 // ---------- Конфиги ----------
-const MAX_HISTORY = 20; // память до 20 сообщений
-const CONTEXT_HISTORY = 10; // последние N сообщений для контекста
+const MAX_HISTORY = 20;       // память до 20 сообщений
+const CONTEXT_HISTORY = 5;    // последние 5 сообщений для контекста
 const localCache = new Map();
 
 // ---------- История ----------
@@ -46,7 +46,7 @@ async function addMessage(chatId, role, content, imageUrl = null) {
   return history;
 }
 
-// ---------- Mistral ----------
+// ---------- Mistral (скоростная модель) ----------
 async function askMistral(chatId, userMessage, imageUrl = null) {
   const history = await getHistory(chatId);
   if (history.length === 0) {
@@ -59,12 +59,13 @@ async function askMistral(chatId, userMessage, imageUrl = null) {
   history.push(userMsg);
 
   const context = history.slice(-CONTEXT_HISTORY*2);
-  const model = imageUrl ? "pixtral-12b" : "mistral-large-latest";
+  // Легкая модель для суперскорости
+  const model = imageUrl ? "pixtral-lite" : "mistral-mini";
 
   try {
     const r = await axios.post(
       "https://api.mistral.ai/v1/chat/completions",
-      { model, messages: context, max_tokens: 4096 },
+      { model, messages: context, max_tokens: 2048 },
       { headers: { Authorization: `Bearer ${process.env.MISTRAL_API_KEY}`, "Content-Type": "application/json" } }
     );
 
@@ -98,7 +99,7 @@ bot.command("history", async (ctx) => {
   ctx.reply(`📊 Сообщений в памяти: ${history.length}\nПримерно диалогов: ${Math.floor(history.length / 2)}`);
 });
 
-// ---------- Обработка текста с мгновенной визуальной отдачей ----------
+// ---------- Обработка текста ----------
 bot.on("text", async (ctx) => {
   const chatId = ctx.chat.id;
   if (ctx.message.text.startsWith("/")) return;
@@ -109,15 +110,7 @@ bot.on("text", async (ctx) => {
   // Асинхронно получаем ответ
   askMistral(chatId, ctx.message.text).then(async (answer) => {
     try {
-      if (answer.length > 4000) {
-        // Разбиваем на куски
-        const chunks = answer.match(/[\s\S]{1,4000}/g);
-        await ctx.deleteMessage(waitMsg.message_id);
-        for (const chunk of chunks) await ctx.reply(chunk);
-      } else {
-        // Редактируем сообщение вместо удаления/отправки нового
-        await ctx.telegram.editMessageText(chatId, waitMsg.message_id, undefined, answer);
-      }
+      await ctx.telegram.editMessageText(chatId, waitMsg.message_id, undefined, answer);
     } catch (err) {
       console.error("Edit message error:", err);
       await ctx.deleteMessage(waitMsg.message_id);
@@ -125,11 +118,10 @@ bot.on("text", async (ctx) => {
     }
   });
 
-  // Асинхронное добавление пользователя в историю
-  addMessage(chatId, "user", ctx.message.text);
+  addMessage(chatId, "user", ctx.message.text); // Асинхронно
 });
 
-// ---------- Обработка фото с мгновенной визуальной отдачей ----------
+// ---------- Обработка фото ----------
 bot.on("photo", async (ctx) => {
   const chatId = ctx.chat.id;
   const waitMsg = await ctx.reply("🔍 Анализирую изображение...");
@@ -141,13 +133,7 @@ bot.on("photo", async (ctx) => {
 
     askMistral(chatId, caption, imageUrl).then(async (answer) => {
       try {
-        if (answer.length > 4000) {
-          const chunks = answer.match(/[\s\S]{1,4000}/g);
-          await ctx.deleteMessage(waitMsg.message_id);
-          for (const chunk of chunks) await ctx.reply(chunk);
-        } else {
-          await ctx.telegram.editMessageText(chatId, waitMsg.message_id, undefined, answer);
-        }
+        await ctx.telegram.editMessageText(chatId, waitMsg.message_id, undefined, answer);
       } catch (err) {
         console.error("Edit photo message error:", err);
         await ctx.deleteMessage(waitMsg.message_id);
@@ -155,7 +141,7 @@ bot.on("photo", async (ctx) => {
       }
     });
 
-    addMessage(chatId, "user", caption, imageUrl);
+    addMessage(chatId, "user", caption, imageUrl); // Асинхронно
   } catch (err) {
     console.error(err);
     await ctx.deleteMessage(waitMsg.message_id);
