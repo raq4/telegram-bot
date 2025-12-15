@@ -1,11 +1,5 @@
 {
-  "name": "telegram-mistral-bot",
-  "version": "1.0.0",
   "type": "module",
-  "private": true,
-  "scripts": {
-    "start": "node api/bot.js"
-  },
   "dependencies": {
     "telegraf": "^4.16.0",
     "axios": "^1.6.8",
