@@ -21,8 +21,8 @@ const redis = new Redis({
 
 // ---------- Локальный кэш истории ----------
 const localCache = new Map();
-const MAX_HISTORY = 99;
-const CONTEXT_HISTORY = 20;
+const MAX_HISTORY = 55;
+const CONTEXT_HISTORY = 10;
 
 async function getChatHistory(chatId) {
   if (localCache.has(chatId)) return localCache.get(chatId);
