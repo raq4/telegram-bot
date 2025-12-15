@@ -1,7 +1,18 @@
 {
+  "name": "telegram-mistral-bot",
+  "version": "1.0.0",
+  "description": "Telegram bot with Mistral AI and Upstash Redis for memory",
+  "type": "module",
+  "main": "api/bot.js",
+  "scripts": {
+    "start": "node api/bot.js"
+  },
   "dependencies": {
     "telegraf": "^4.16.0",
     "axios": "^1.6.0",
     "@upstash/redis": "^1.24.0"
+  },
+  "engines": {
+    "node": "20.x"
   }
 }
