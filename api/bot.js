@@ -1,6 +1,12 @@
 import { Telegraf } from "telegraf";
 import axios from "axios";
 import { Redis } from "@upstash/redis";
+import 'dotenv/config'; // Загрузка переменных из .env
+
+// ---------- CONFIG ----------
+const MAX_HISTORY = 20;
+const CONTEXT_LIMIT = 6; // Четное число, чтобы пары user/assistant не разрывались
+const SYSTEM_PROMPT = { role: "system", content: "Ты полезный ассистент. Отвечай на русском языке." };
 
 // ---------- REDIS ----------
 const redis = new Redis({
@@ -11,123 +17,129 @@ const redis = new Redis({
 // ---------- BOT ----------
 const bot = new Telegraf(process.env.TELEGRAM_TOKEN);
 
-// ---------- CONFIG ----------
-const MAX_HISTORY = 20;
-const CONTEXT_LIMIT = 5;
-
-// ---------- MEMORY ----------
+// ---------- MEMORY FUNCTIONS ----------
 async function getHistory(chatId) {
-  const data = await redis.get(`chat:${chatId}`);
-  return Array.isArray(data) ? data : [];
+  try {
+    const data = await redis.get(`chat:${chatId}`);
+    return Array.isArray(data) ? data : [];
+  } catch (e) {
+    console.error("Redis Get Error:", e);
+    return [];
+  }
 }
 
 async function saveHistory(chatId, history) {
-  const trimmed = history.slice(-MAX_HISTORY * 2);
-  await redis.set(`chat:${chatId}`, trimmed);
-  await redis.expire(`chat:${chatId}`, 86400);
+  try {
+    const trimmed = history.slice(-MAX_HISTORY * 2);
+    await redis.set(`chat:${chatId}`, trimmed);
+    await redis.expire(`chat:${chatId}`, 86400); // Хранить 24 часа
+  } catch (e) {
+    console.error("Redis Save Error:", e);
+  }
 }
 
-async function clearHistory(chatId) {
-  await redis.del(`chat:${chatId}`);
-}
-
-// ---------- MISTRAL ----------
+// ---------- MISTRAL LOGIC ----------
 async function askMistral(chatId, text) {
   let history = await getHistory(chatId);
-
-  if (history.length === 0) {
-    history.push({
-      role: "system",
-      content: "Ты полезный ассистент. Отвечай на русском языке."
-    });
-  }
-
+  
+  // Добавляем новое сообщение пользователя
   history.push({ role: "user", content: text });
 
-  const context = history.slice(-CONTEXT_LIMIT * 2);
+  // Формируем контекст: System + последние N сообщений
+  const recentMessages = history.slice(-CONTEXT_LIMIT);
+  const messagesForAI = [SYSTEM_PROMPT, ...recentMessages];
 
-  const response = await axios.post(
-    "https://api.mistral.ai/v1/chat/completions",
-    {
-      model: "mistral-large-latest",
-      messages: context,
-      max_tokens: 2048
-    },
-    {
-      headers: {
-        Authorization: `Bearer ${process.env.MISTRAL_API_KEY}`,
-        "Content-Type": "application/json"
+  try {
+    const response = await axios.post(
+      "https://api.mistral.ai/v1/chat/completions",
+      {
+        model: "mistral-large-latest",
+        messages: messagesForAI,
+        max_tokens: 2048
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.MISTRAL_API_KEY}`,
+          "Content-Type": "application/json"
+        }
       }
-    }
-  );
+    );
 
-  const answer = response.data.choices[0].message.content;
+    const answer = response.data.choices[0].message.content;
+    
+    // Сохраняем ответ в историю
+    history.push({ role: "assistant", content: answer });
+    await saveHistory(chatId, history);
 
-  history.push({ role: "assistant", content: answer });
-  await saveHistory(chatId, history);
-
-  return answer;
+    return answer;
+  } catch (e) {
+    console.error("Mistral API Error:", e.response?.data || e.message);
+    throw new Error("Ошибка нейросети");
+  }
 }
 
-// ---------- COMMANDS ----------
+// ---------- BOT COMMANDS ----------
 bot.start((ctx) => {
-  ctx.reply(
-    "🤖 Бот запущен\n\n" +
-    "Память: 20 сообщений\n\n" +
-    "Команды:\n" +
-    "/history — показать память\n" +
-    "/clear — очистить память"
-  );
+  ctx.reply("🤖 Бот готов к работе!\n\nПиши мне любые вопросы. Я запоминаю контекст диалога.");
 });
 
 bot.command("clear", async (ctx) => {
-  await clearHistory(ctx.chat.id);
-  ctx.reply("✅ История очищена");
+  await redis.del(`chat:${ctx.chat.id}`);
+  ctx.reply("✅ История нашего диалога очищена.");
 });
 
 bot.command("history", async (ctx) => {
   const history = await getHistory(ctx.chat.id);
-  ctx.reply(
-    `📊 В памяти сообщений: ${history.length}\n` +
-    `Примерно диалогов: ${Math.floor(history.length / 2)}`
-  );
+  ctx.reply(`📊 В памяти сообщений: ${history.length}`);
 });
 
-// ---------- TEXT ----------
+// ---------- TEXT HANDLER ----------
 bot.on("text", async (ctx) => {
-  const text = ctx.message.text;
-  if (text.startsWith("/")) return;
+  if (ctx.message.text.startsWith("/")) return;
 
   try {
-    const answer = await askMistral(ctx.chat.id, text);
+    // Показываем статус "печатает"
+    await ctx.sendChatAction("typing");
+    const answer = await askMistral(ctx.chat.id, ctx.message.text);
 
-    // Telegram лимит
+    // Разбивка длинных сообщений (лимит Telegram ~4096 символов)
     if (answer.length > 4000) {
       const parts = answer.match(/[\s\S]{1,4000}/g);
-      for (const p of parts) {
-        await ctx.reply(p);
-      }
+      for (const p of parts) await ctx.reply(p);
     } else {
       await ctx.reply(answer);
     }
   } catch (e) {
-    console.error(e);
-    ctx.reply("❌ Ошибка обработки запроса");
+    ctx.reply("❌ Произошла ошибка. Попробуйте позже или очистите историю командой /clear.");
   }
 });
 
-// ---------- VERCEL ----------
-export default async function handler(req, res) {
-  if (req.method === "POST") {
+// ---------- LAUNCH MODE ----------
+// Если есть WEBHOOK_URL, работаем как сервер (Vercel)
+// Если нет — запускаемся локально (Long Polling)
+
+if (process.env.WEBHOOK_URL) {
+  // Экспорт для Vercel
+  export default async function handler(req, res) {
     try {
-      await bot.handleUpdate(req.body);
-      res.status(200).send("OK");
+      if (req.method === "POST") {
+        await bot.handleUpdate(req.body);
+        res.status(200).send("OK");
+      } else {
+        const url = `${process.env.WEBHOOK_URL}/api/bot`; // Убедитесь, что путь совпадает с Vercel
+        await bot.telegram.setWebhook(url);
+        res.status(200).send(`Webhook set to ${url}`);
+      }
     } catch (e) {
       console.error(e);
-      res.status(500).send("Bot error");
+      res.status(500).send("Internal Error");
     }
-  } else {
-    await bot.telegram.setWebhook(process.env.WEBHOOK_URL);
-    res.status(200).send("Webhook set");
   }
+} else {
+  // Локальный запуск
+  bot.launch().then(() => console.log("🚀 Бот запущен локально (через Polling)"));
 }
+
+// Мягкая остановка
+process.once('SIGINT', () => bot.stop('SIGINT'));
+process.once('SIGTERM', () => bot.stop('SIGTERM'));
