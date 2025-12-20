@@ -1,8 +1,16 @@
 {
-  "functions": {
-    "api/bot.js": {
-      "maxDuration": 60,
-      "memory": 1024
+  "version": 2,
+  "rewrites": [
+    {
+      "source": "/api/bot",
+      "destination": "/api/bot.js"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/api/bot.js"
     }
+  ],
+  "env": {
+    "NODE_ENV": "production"
   }
 }
