@@ -35,41 +35,61 @@ async function saveHistory(chatId, history) {
   }
 }
 
-// ---------- MISTRAL AI ----------
-async function askMistral(chatId, text) {
+// ---------- MISTRAL AI (С ПОДДЕРЖКОЙ ФОТО) ----------
+async function askMistral(chatId, text, imageUrl = null) {
   let history = await getHistory(chatId);
 
   if (history.length === 0) {
-    history.push({ role: "system", content: "Ты полезный ассистент. Отвечай на русском языке." });
+    history.push({ role: "system", content: "Ты полезный ассистент. Отвечай на русском языке. Если тебе прислали фото, проанализируй его." });
   }
 
-  history.push({ role: "user", content: text });
+  // Формируем контент сообщения (текст или текст + фото)
+  let userContent;
+  if (imageUrl) {
+    userContent = [
+      { type: "text", text: text || "Что на этом фото?" },
+      { type: "image_url", image_url: imageUrl }
+    ];
+  } else {
+    userContent = text;
+  }
+
+  history.push({ role: "user", content: userContent });
+  
+  // Для экономии лимитов берем только последние сообщения
   const context = history.slice(-(CONTEXT_LIMIT * 2 + 1));
 
-  const response = await axios.post(
-    "https://api.mistral.ai/v1/chat/completions",
-    {
-      model: "mistral-large-latest",
-      messages: context,
-      max_tokens: 2048
-    },
-    {
-      headers: {
-        Authorization: `Bearer ${process.env.MISTRAL_API_KEY}`,
-        "Content-Type": "application/json"
+  try {
+    const response = await axios.post(
+      "https://api.mistral.ai/v1/chat/completions",
+      {
+        model: "mistral-large-latest",
+        messages: context,
+        max_tokens: 2048
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.MISTRAL_API_KEY}`,
+          "Content-Type": "application/json"
+        }
       }
-    }
-  );
+    );
 
-  const answer = response.data.choices[0].message.content;
-  history.push({ role: "assistant", content: answer });
-  await saveHistory(chatId, history);
+    const answer = response.data.choices[0].message.content;
+    
+    // Сохраняем в историю только текст ответа, чтобы не перегружать Redis
+    history.push({ role: "assistant", content: answer });
+    await saveHistory(chatId, history);
 
-  return answer;
+    return answer;
+  } catch (e) {
+    console.error("Mistral API Error:", e.response?.data || e.message);
+    throw e;
+  }
 }
 
-// ---------- КОМАНДЫ ----------
-bot.start((ctx) => ctx.reply("🤖 Бот запущен! Напиши мне что-нибудь."));
+// ---------- ОБРАБОТКА ТЕКСТА ----------
+bot.start((ctx) => ctx.reply("🤖 Бот запущен! Я понимаю текст и вижу фотографии."));
 
 bot.command("clear", async (ctx) => {
   await redis.del(`chat:${ctx.chat.id}`);
@@ -81,16 +101,27 @@ bot.on("text", async (ctx) => {
   try {
     await ctx.sendChatAction("typing");
     const answer = await askMistral(ctx.chat.id, ctx.message.text);
-    
-    if (answer.length > 4000) {
-      const parts = answer.match(/[\s\S]{1,4000}/g);
-      for (const p of parts) await ctx.reply(p);
-    } else {
-      await ctx.reply(answer);
-    }
+    await ctx.reply(answer);
   } catch (e) {
-    console.error("Mistral/Bot Error:", e);
-    ctx.reply("❌ Ошибка. Попробуй позже или используй /clear");
+    ctx.reply("❌ Ошибка при обработке текста.");
+  }
+});
+
+// ---------- ОБРАБОТКА ФОТО ----------
+bot.on("photo", async (ctx) => {
+  try {
+    await ctx.sendChatAction("typing");
+    
+    // Получаем ссылку на самое качественное фото (последнее в массиве)
+    const photo = ctx.message.photo.pop();
+    const link = await ctx.telegram.getFileLink(photo.file_id);
+    const caption = ctx.message.caption || "Что на этом изображении?";
+
+    const answer = await askMistral(ctx.chat.id, caption, link.href);
+    await ctx.reply(answer);
+  } catch (e) {
+    console.error("Photo process error:", e);
+    ctx.reply("❌ Не удалось проанализировать фото. Убедитесь, что файл не слишком большой.");
   }
 });
 
@@ -105,7 +136,6 @@ export default async function handler(req, res) {
       res.status(500).send("Update Error");
     }
   } else {
-    // При GET запросе регистрируем вебхук
     try {
       const url = `https://telegram-bot-lgks.vercel.app/api/bot`;
       await bot.telegram.setWebhook(url);
